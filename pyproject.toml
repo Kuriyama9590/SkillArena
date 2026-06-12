@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skill-arena"
+version = "0.1.0"
+description = "Skill竞技场:在固定任务集上对 skill 进行 Elo 对比"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Coder" }]
+dependencies = [
+    "openai>=1.40.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.6",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
+embeddings = [
+    # 仅在 TaskDeduplicator(use_embeddings=True) 时需要;默认 jaccard 不依赖此包
+    "sentence-transformers>=2.6.0",
+    "torch>=2.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["arena*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.pydantic-mypy]
+init_forbid_extra = true

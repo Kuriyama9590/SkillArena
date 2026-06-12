@@ -1,0 +1,34 @@
+以下是 MySQL 与 PostgreSQL 的关键差异、适用场景及选择建议的对比表格：
+
+| 对比维度 | MySQL | PostgreSQL | 如何选择 |
+|---------|-------|-----------|---------|
+| **许可证与成本** | 双协议（社区版 GPL / 商业版需付费），社区版免费。 | PostgreSQL 许可证（类似 MIT 或 BSD），完全免费开源。 | 预算敏感且需商用许可无顾虑 → PostgreSQL；已有 MySQL 商业版授权或需 Oracle 支持 → MySQL。 |
+| **ACID 兼容性** | 默认 **非完整 ACID**（MyISAM 引擎无事务）；InnoDB 引擎完整支持 ACID。 | **完整 ACID** 默认行为，所有存储模式均支持事务。 | 对事务一致性要求极高（金融、计费） → PostgreSQL；可接受事务折衷（如只读报表）→ MySQL。 |
+| **存储引擎** | **插件式架构**：InnoDB（默认）、MyISAM、Memory、CSV 等，不同引擎特性差异大。 | **单一引擎**（基于 Oracle 的 PostgreSQL 内核），所有表支持统一特性。 | 需要灵活切换不同表特性（如全文搜索、内存表） → MySQL；追求一致性、避免引擎陷阱 → PostgreSQL。 |
+| **SQL 标准兼容性** | 部分兼容（如窗口函数、CTE 较晚支持），语法较非标准。 | **高度兼容 SQL:2016**，支持递归 CTE、窗口函数、聚合函数增强等。 | 需要复杂查询（递归、窗口分析）→ PostgreSQL；使用标准 SQL 且追求跨数据库迁移 → PostgreSQL；MySQL 语法更简单易学。 |
+| **索引类型** | B+Tree、哈希、全文索引（InnoDB 支持空间索引 R-tree）。 | B+Tree、哈希、GiST、GIN、SP-GiST、BRIN、空间索引（PostGIS 扩展）、部分索引、表达式索引。 | 需要 GIS 地理数据 → PostgreSQL（PostGIS）；需要全文检索 → 两者均可（MySQL 全文简单，PostgreSQL 更强大）；需要部分索引、表达式索引 → PostgreSQL。 |
+| **复制与高可用** | 异步主从复制、半同步、组复制（MySQL Group Replication）、InnoDB Cluster、Galera（第三方）。 | 流复制（同步/异步）、逻辑复制、级联复制、内置 PgBouncer 连接池、Patroni 实现自动故障转移。 | 需要成熟的开源集群方案（如 PXC、InnoDB Cluster）→ MySQL；需要原生逻辑复制、零数据丢失 → PostgreSQL。 |
+| **分片能力** | 无原生分片，需依赖 ProxySQL、Vitess、MySQL Cluster 等中间件。 | 无原生分片（PostgreSQL 10+ 支持表分区，但非水平分片），可通过 Citus、pg_shard 等扩展。 | 需要大规模水平扩展 → MySQL 生态更成熟（Vitess、TiDB 兼容 MySQL）；PostgreSQL 生态（Citus）也适合分析型动态分片。 |
+| **性能 (读写)** | **读密集**场景（简单查询、高并发读）优化较好；写性能受锁机制影响。 | **写密集**、复杂查询（JOIN、子查询）性能更优；支持并行查询、并行索引扫描。 | 读多写少、简单查询 → MySQL；写多读少、复杂分析、混合负载 → PostgreSQL。 |
+| **并发控制** | MVCC + 行级锁（InnoDB）；存在间隙锁、Next-Key 锁防止幻读。 | MVCC + 行级锁；快照隔离级别（Serializable 更严格）；无间隙锁问题。 | 高并发写且需要避免锁冲突 → PostgreSQL（更少死锁）；MySQL 高并发读场景锁开销更小。 |
+| **扩展性（垂直/水平）** | 垂直扩展良好；水平扩展依赖中间件；对多核 CPU 利用不如 PostgreSQL。 | 垂直扩展极好（多核并行查询、并行索引）；水平扩展通过扩展（Citus）实现。 | 需要充分利用单机多核 CPU → PostgreSQL；水平扩展依赖成熟中间件 → MySQL。 |
+| **数据类型支持** | 基础类型（INT, VARCHAR, DECIMAL, JSON, 空间数据 GIS）。 | 丰富类型：数组、JSON/JSONB、范围类型、枚举、复合类型、网络地址、几何类型、自定义类型。 | 需要数组、范围类型、自定义类型 → PostgreSQL；只需基础类型 → 两者均可；需要高性能 JSON 查询 → PostgreSQL（JSONB 索引）。 |
+| **GIS/地理空间** | 通过 MySQL Spatial Extensions（基于 OpenGIS）提供有限支持。 | **PostGIS** 扩展，功能最强大，支持全套 OGC 标准、地理空间计算、R 树索引。 | 任何 GIS、地理信息、位置服务 → PostgreSQL + PostGIS（首选）。 |
+| **全文搜索** | 内置全文索引（MyISAM/InnoDB），支持简单搜索。 | 通过 tsvector/tsquery 提供高级全文搜索（支持词干、词典、自定义配置）。 | 需要复杂全文搜索（多语言、词干、权重排序）→ PostgreSQL；简单搜索 → MySQL 足够。 |
+| **适用场景** | **Web 应用**（WordPress、Drupal、LAMP）、中小型 OLTP、只读报表、日志存储。 | **复杂 OLTP**（金融、ERP）、**OLAP**（数据仓库）、**GIS**（地理信息系统）、**科学计算**、**数据集成**。 | 长期维度：如果是新项目、未来需要复杂查询或 GIS → PostgreSQL；如果是现有 LAMP 栈或简单应用 → MySQL。 |
+| **运维与生态** | 工具丰富（phpMyAdmin、MySQL Workbench、Percona Toolkit）、云服务商普遍支持。 | 工具稍少但质量高（pgAdmin、DBeaver、pgBadger）、云服务商（RDS、Aurora 兼容 PostgreSQL）普及。 | 团队熟悉工具链 → 选择对应数据库；云托管 → 两者均支持良好。 |
+
+### 总结选择建议
+
+| 需求 | 推荐数据库 |
+|------|----------|
+| 简单 CRUD、高并发读、快速部署 | MySQL |
+| 复杂查询、事务完整、分析混合 | PostgreSQL |
+| 地理空间 (GIS) 应用 | PostgreSQL + PostGIS |
+| 高频率写、低延迟事务 | PostgreSQL |
+| 水平分片、大规模分布式 | MySQL + Vitess / PostgreSQL + Citus |
+| 数据一致性要求极高 | PostgreSQL |
+| 已有 LAMP/LEMP 技术栈 | MySQL |
+| 开源免费、避免商业锁定 | PostgreSQL |
+
+> **注**：两者都是优秀的开源数据库，实际选择应结合团队经验、现有架构及未来扩展需求综合评估。

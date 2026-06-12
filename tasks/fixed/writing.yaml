@@ -1,0 +1,29 @@
+- id: writing-001
+  category: writing
+  prompt: "写一段关于远程办公利弊的短文,200 字以内"
+  reference: null
+  difficulty: easy
+
+- id: writing-002
+  category: writing
+  prompt: "向一位 60 岁的非技术背景长辈解释什么是区块链,400 字以内"
+  reference: null
+  difficulty: medium
+
+- id: writing-003
+  category: writing
+  prompt: "为一个新出的时间管理 App 写一段 150 字以内的应用商店宣传文案,要突出'放下手机'这一卖点"
+  reference: null
+  difficulty: easy
+
+- id: writing-004
+  category: writing
+  prompt: "改写下面这段话,使其更适合在正式商务邮件中使用:'我们最近搞了个新东西,你看看行不行,不行再说。'"
+  reference: null
+  difficulty: medium
+
+- id: writing-005
+  category: writing
+  prompt: "为一个关于'AI 是否会取代程序员'的辩论赛,准备一段 3 分钟的开篇陈词(支持方)"
+  reference: null
+  difficulty: hard

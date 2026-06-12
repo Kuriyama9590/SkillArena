@@ -1,0 +1,17 @@
+```javascript
+function debounce(fn, wait) {
+  let timer = null;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+```
+
+**防抖原理**:每次调用清除之前的定时器,在 `wait` 毫秒内无新调用才执行 `fn`。返回的函数保留 `this` 上下文并透传参数。
+
+**示例**:
+```javascript
+const log = debounce(() => console.log('执行'), 300);
+log(); // 快速多次调用只会在停止 300ms 后输出一次
+```

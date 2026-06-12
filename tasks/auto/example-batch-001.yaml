@@ -1,0 +1,27 @@
+# example-batch-001.yaml
+# 这是 v4-pro 自动生成任务的**格式示范文件**(手写,无 API 调用)。
+# 真实生成请用 arena.task_generator.TaskGenerator。
+
+- id: writing-auto-a1b2c3
+  category: writing
+  prompt: "为一家精品咖啡店写一段 200 字以内的品牌故事,突出'手冲'与'产地直供'两个卖点"
+  reference: null
+  difficulty: medium
+
+- id: coding-auto-d4e5f6
+  category: coding
+  prompt: "用 Python 写一个函数 group_by(items, key_fn),对 items 按 key_fn(item) 的返回值分组,返回 dict;要求 key_fn 抛异常时整组失败而不是部分成功"
+  reference: |
+    from collections import defaultdict
+    def group_by(items, key_fn):
+        out = defaultdict(list)
+        for it in items:
+            out[key_fn(it)].append(it)
+        return dict(out)
+  difficulty: medium
+
+- id: analysis-auto-789abc
+  category: analysis
+  prompt: "某知识付费 App 的 DAU 从 80 万跌到 55 万(跌 31%),列出至少 4 个可能原因,并说明如何用数据验证每个假设"
+  reference: null
+  difficulty: hard

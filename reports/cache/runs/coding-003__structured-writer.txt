@@ -1,0 +1,35 @@
+## 函数实现
+
+```javascript
+function debounce(fn, wait) {
+  let timeout = null;
+  
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      fn.apply(this, args);
+    }, wait);
+  };
+}
+```
+
+## 工作原理
+
+- **清除旧定时器**：每次调用返回的函数时，立即清除之前设置的定时器。
+- **设置新定时器**：重新设定一个 `wait` 毫秒后执行 `fn` 的定时器。
+- **重新计时**：如果在 `wait` 期间再次调用，则再次清除并重新设定，只执行最后一次。
+- **保存上下文**：通过闭包保留 `timeout` 变量，并通过 `this` 绑定和参数透传保持原始调用环境。
+
+## 使用示例
+
+```javascript
+const debouncedLog = debounce(console.log, 1000);
+debouncedLog('a'); // 被清除
+debouncedLog('b'); // 被清除
+debouncedLog('c'); // 等待1秒后输出 "c"
+```
+
+## 注意事项
+
+- 适用于高频事件（如输入、滚动）的最终回调场景。
+- 如需立即执行首次调用，可增加 `immediate` 参数实现**前缘防抖**。

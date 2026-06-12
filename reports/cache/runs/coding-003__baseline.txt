@@ -1,0 +1,636 @@
+这是为您生成的一个可直接运行的 HTML 文档，其中包含一个功能完整的 JavaScript 防抖函数 `debounce(fn, wait)` 及其可视化演示。
+```html
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>防抖函数 debounce</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                "Helvetica Neue", Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 32px 20px;
+            background: #f5f7fb;
+            color: #1e293b;
+        }
+
+        h1 {
+            font-size: 26px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #64748b;
+            margin-top: 0;
+            margin-bottom: 32px;
+        }
+
+        .card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 24px 28px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+            margin-bottom: 24px;
+            border: 1px solid #e9edf2;
+        }
+
+        .card h2 {
+            font-size: 18px;
+            font-weight: 500;
+            margin-top: 0;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card h2 .badge {
+            font-size: 12px;
+            background: #e9edf2;
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-weight: 400;
+            color: #475569;
+        }
+
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        button {
+            padding: 10px 22px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.97);
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: #fff;
+        }
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: #475569;
+            border: 1px solid #cbd5e1;
+        }
+        .btn-outline:hover {
+            background: #f1f5f9;
+        }
+
+        .btn-success {
+            background: #22c55e;
+            color: #fff;
+        }
+        .btn-success:hover {
+            background: #16a34a;
+        }
+
+        .btn-warning {
+            background: #f59e0b;
+            color: #fff;
+        }
+        .btn-warning:hover {
+            background: #d97706;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .input-group input {
+            flex: 1;
+            min-width: 180px;
+            padding: 10px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 15px;
+            outline: none;
+            transition: border 0.2s;
+        }
+
+        .input-group input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+
+        .log-area {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px 18px;
+            min-height: 80px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 14px;
+            font-family: "SF Mono", "Fira Code", monospace;
+            line-height: 1.6;
+            margin-top: 12px;
+        }
+
+        .log-area .log-item {
+            padding: 2px 0;
+            border-bottom: 1px solid #e9edf2;
+        }
+
+        .log-area .log-item:last-child {
+            border-bottom: none;
+        }
+
+        .log-area .highlight {
+            color: #3b82f6;
+            font-weight: 500;
+        }
+
+        .log-area .muted {
+            color: #94a3b8;
+        }
+
+        .flex-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .code-block {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 16px 20px;
+            border-radius: 10px;
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: 14px;
+            line-height: 1.7;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .code-block .comment {
+            color: #94a3b8;
+        }
+        .code-block .keyword {
+            color: #c084fc;
+        }
+        .code-block .fn {
+            color: #60a5fa;
+        }
+        .code-block .string {
+            color: #34d399;
+        }
+        .code-block .number {
+            color: #fbbf24;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .status-badge.pending {
+            background: #fef3c7;
+            color: #b45309;
+        }
+        .status-badge.idle {
+            background: #e9edf2;
+            color: #475569;
+        }
+        .status-badge.executed {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .footer-note {
+            font-size: 13px;
+            color: #94a3b8;
+            margin-top: 16px;
+            text-align: center;
+            border-top: 1px solid #e9edf2;
+            padding-top: 16px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🛡️ 防抖函数 <code style="font-size:22px;">debounce(fn, wait)</code></h1>
+    <p class="subtitle">
+        在连续触发时，只在最后一次触发后等待 <strong>wait</strong> 毫秒再执行。
+        支持 leading / trailing 模式，支持取消与立即调用。
+    </p>
+
+    <!-- ===== 核心实现展示 ===== -->
+    <div class="card">
+        <h2>📦 核心实现</h2>
+        <div class="code-block">
+            <span class="comment">/**</span>
+            <span class="comment"> * 创建一个防抖函数</span>
+            <span class="comment"> * @param {Function} fn      要执行的函数</span>
+            <span class="comment"> * @param {number}   wait     等待时间（毫秒）</span>
+            <span class="comment"> * @param {boolean}  leading  是否在触发开始时立即执行（默认 false）</span>
+            <span class="comment"> * @returns {Function} 防抖后的函数，附带 .cancel() 和 .flush() 方法</span>
+            <span class="comment"> */</span>
+            <span class="keyword">function</span> <span class="fn">debounce</span>(fn, wait, leading = <span class="keyword">false</span>) {
+            <span class="keyword">  let</span> timer = <span class="keyword">null</span>;
+            <span class="keyword">  let</span> lastArgs = <span class="keyword">null</span>;
+            <span class="keyword">  let</span> lastThis = <span class="keyword">null</span>;
+            <span class="keyword">  let</span> invoked = <span class="keyword">false</span>; <span class="comment">// 标记 leading 是否已执行</span>
+
+            <span class="keyword">  function</span> <span class="fn">invoke</span>() {
+            <span class="keyword">    if</span> (lastArgs) {
+            fn.apply(lastThis, lastArgs);
+            }
+            invoked = <span class="keyword">false</span>;
+            lastArgs = <span class="keyword">null</span>;
+            lastThis = <span class="keyword">null</span>;
+            }
+
+            <span class="keyword">  function</span> <span class="fn">debounced</span>(...args) {
+            lastArgs = args;
+            lastThis = <span class="keyword">this</span>;
+
+            <span class="keyword">    if</span> (timer) {
+            clearTimeout(timer);
+            }
+
+            <span class="keyword">    if</span> (leading && !invoked) {
+            <span class="comment">      // leading 模式：首次触发立即执行</span>
+            invoked = <span class="keyword">true</span>;
+            invoke();
+            }
+
+            <span class="keyword">    //</span> 设置新的定时器（trailing 执行）
+            timer = setTimeout(() => {
+            <span class="keyword">      if</span> (!leading) {
+            <span class="comment">        // trailing 模式：等待结束后执行</span>
+            invoke();
+            } <span class="keyword">else</span> {
+            <span class="comment">        // leading 模式：重置 invoked，以便下一次 leading 触发</span>
+            invoked = <span class="keyword">false</span>;
+            timer = <span class="keyword">null</span>;
+            }
+            }, wait);
+            }
+
+            <span class="comment">  // 取消尚未执行的 trailing 调用</span>
+            debounced.<span class="fn">cancel</span> = () => {
+            <span class="keyword">    if</span> (timer) {
+            clearTimeout(timer);
+            timer = <span class="keyword">null</span>;
+            }
+            invoked = <span class="keyword">false</span>;
+            lastArgs = <span class="keyword">null</span>;
+            lastThis = <span class="keyword">null</span>;
+            };
+
+            <span class="comment">  // 立即执行当前缓存的调用（如果有）</span>
+            debounced.<span class="fn">flush</span> = () => {
+            <span class="keyword">    if</span> (timer && lastArgs) {
+            clearTimeout(timer);
+            timer = <span class="keyword">null</span>;
+            invoke();
+            }
+            };
+
+            <span class="keyword">  return</span> debounced;
+            }
+        </div>
+    </div>
+
+    <!-- ===== 演示区：基础防抖（trailing） ===== -->
+    <div class="card">
+        <h2>🧪 演示 · 基础防抖 <span class="badge">trailing（默认）</span></h2>
+        <p style="margin:0 0 12px; color:#475569; font-size:14px;">
+            快速点击按钮，函数只会在你<strong>停止点击 600ms 后</strong>执行一次。
+        </p>
+        <div class="btn-group">
+            <button id="trailingBtn" class="btn-primary">⚡ 快速点击我（trailing）</button>
+            <button id="trailingReset" class="btn-outline">↻ 重置计数</button>
+        </div>
+        <div class="flex-row">
+            <span>触发次数：<strong id="trailingTriggerCount">0</strong></span>
+            <span>实际执行：<strong id="trailingExecCount">0</strong></span>
+            <span id="trailingStatus" class="status-badge idle">● 空闲</span>
+        </div>
+        <div class="log-area" id="trailingLog">
+            <div class="log-item muted">— 日志将显示在这里 —</div>
+        </div>
+    </div>
+
+    <!-- ===== 演示区：leading 模式 ===== -->
+    <div class="card">
+        <h2>⚡ 演示 · Leading 模式 <span class="badge">leading: true</span></h2>
+        <p style="margin:0 0 12px; color:#475569; font-size:14px;">
+            第一次点击<strong>立即执行</strong>，之后快速点击不会执行，
+            直到停止点击 600ms 后，下一次点击才会再次立即执行。
+        </p>
+        <div class="btn-group">
+            <button id="leadingBtn" class="btn-warning">🚀 快速点击我（leading）</button>
+            <button id="leadingReset" class="btn-outline">↻ 重置计数</button>
+        </div>
+        <div class="flex-row">
+            <span>触发次数：<strong id="leadingTriggerCount">0</strong></span>
+            <span>实际执行：<strong id="leadingExecCount">0</strong></span>
+            <span id="leadingStatus" class="status-badge idle">● 空闲</span>
+        </div>
+        <div class="log-area" id="leadingLog">
+            <div class="log-item muted">— 日志将显示在这里 —</div>
+        </div>
+    </div>
+
+    <!-- ===== 演示区：输入框防抖 + cancel / flush ===== -->
+    <div class="card">
+        <h2>🔧 实用场景 · 输入建议 <span class="badge">wait: 400ms</span></h2>
+        <p style="margin:0 0 12px; color:#475569; font-size:14px;">
+            在输入框中连续打字，防抖会在你<strong>停止输入 400ms 后</strong>才打印内容。
+            下方还展示了 <code>.cancel()</code> 和 <code>.flush()</code> 的用法。
+        </p>
+        <div class="input-group">
+            <input type="text" id="searchInput" placeholder="请输入关键词..." autocomplete="off" />
+            <button id="cancelBtn" class="btn-danger">✕ 取消防抖 (cancel)</button>
+            <button id="flushBtn" class="btn-success">▶ 立即执行 (flush)</button>
+        </div>
+        <div class="log-area" id="inputLog">
+            <div class="log-item muted">— 输入内容将在这里显示 —</div>
+        </div>
+    </div>
+
+    <div class="footer-note">
+        ⚡ 打开浏览器控制台可以查看更多细节 · 所有演示共用同一个 <code>debounce</code> 函数
+    </div>
+
+    <script>
+        // ============================================================
+        //  1. 核心 debounce 实现（支持 leading / trailing，含 cancel & flush）
+        // ============================================================
+        function debounce(fn, wait, leading = false) {
+            let timer = null;
+            let lastArgs = null;
+            let lastThis = null;
+            let invoked = false; // 仅用于 leading 模式：标记是否已执行过 leading 调用
+
+            function invoke() {
+                if (lastArgs) {
+                    fn.apply(lastThis, lastArgs);
+                }
+                invoked = false;
+                lastArgs = null;
+                lastThis = null;
+            }
+
+            function debounced(...args) {
+                lastArgs = args;
+                lastThis = this;
+
+                if (timer) {
+                    clearTimeout(timer);
+                }
+
+                // leading 模式：如果尚未执行，立即执行一次
+                if (leading && !invoked) {
+                    invoked = true;
+                    invoke();
+                }
+
+                // 设置 trailing 定时器
+                timer = setTimeout(() => {
+                    if (!leading) {
+                        // trailing 模式：等待结束后执行
+                        invoke();
+                    } else {
+                        // leading 模式：只需重置状态，等待下一次 leading 触发
+                        invoked = false;
+                        timer = null;
+                    }
+                }, wait);
+            }
+
+            // 取消任何等待中的执行
+            debounced.cancel = function() {
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
+                invoked = false;
+                lastArgs = null;
+                lastThis = null;
+            };
+
+            // 立即执行当前缓存的调用（如果有）
+            debounced.flush = function() {
+                if (timer && lastArgs) {
+                    clearTimeout(timer);
+                    timer = null;
+                    invoke();
+                }
+            };
+
+            return debounced;
+        }
+
+
+        // ============================================================
+        //  2. 演示一：基础防抖 (trailing)
+        // ============================================================
+        const trailingLog = document.getElementById('trailingLog');
+        const trailingTriggerCount = document.getElementById('trailingTriggerCount');
+        const trailingExecCount = document.getElementById('trailingExecCount');
+        const trailingStatus = document.getElementById('trailingStatus');
+
+        let tTrigger = 0;
+        let tExec = 0;
+
+        function addLog(area, msg, type = 'normal') {
+            const div = document.createElement('div');
+            div.className = 'log-item';
+            if (type === 'highlight') {
+                div.innerHTML = msg.replace(/\d+/g, (m) => `<span class="highlight">${m}</span>`);
+            } else if (type === 'muted') {
+                div.innerHTML = `<span class="muted">${msg}</span>`;
+            } else {
+                div.textContent = msg;
+            }
+            area.appendChild(div);
+            area.scrollTop = area.scrollHeight;
+            // 保持最多 50 条
+            while (area.children.length > 50) {
+                area.removeChild(area.firstChild);
+            }
+        }
+
+        function updateTrailingStatus(state) {
+            trailingStatus.className = 'status-badge ' + state;
+            trailingStatus.textContent = state === 'pending' ? '● 等待中...' :
+                state === 'executed' ? '● 已执行' :
+                '● 空闲';
+        }
+
+        const trailingDebounced = debounce(function (msg) {
+            tExec++;
+            trailingExecCount.textContent = tExec;
+            addLog(trailingLog, `✅ 执行 #${tExec} | "${msg}" (距上次触发结束 600ms)`, 'highlight');
+            updateTrailingStatus('executed');
+        }, 600, false);
+
+        document.getElementById('trailingBtn').addEventListener('click', function () {
+            tTrigger++;
+            trailingTriggerCount.textContent = tTrigger;
+            updateTrailingStatus('pending');
+            addLog(trailingLog, `⚡ 触发 #${tTrigger}`, 'muted');
+            trailingDebounced(`trailing 点击 #${tTrigger}`);
+        });
+
+        document.getElementById('trailingReset').addEventListener('click', function () {
+            trailingDebounced.cancel();
+            tTrigger = 0;
+            tExec = 0;
+            trailingTriggerCount.textContent = '0';
+            trailingExecCount.textContent = '0';
+            trailingLog.innerHTML = '<div class="log-item muted">— 日志已重置 —</div>';
+            updateTrailingStatus('idle');
+        });
+
+
+        // ============================================================
+        //  3. 演示二：leading 模式
+        // ============================================================
+        const leadingLog = document.getElementById('leadingLog');
+        const leadingTriggerCount = document.getElementById('leadingTriggerCount');
+        const leadingExecCount = document.getElementById('leadingExecCount');
+        const leadingStatus = document.getElementById('leadingStatus');
+
+        let lTrigger = 0;
+        let lExec = 0;
+
+        function updateLeadingStatus(state) {
+            leadingStatus.className = 'status-badge ' + state;
+            leadingStatus.textContent = state === 'pending' ? '● 等待中...' :
+                state === 'executed' ? '● 已执行' :
+                '● 空闲';
+        }
+
+        const leadingDebounced = debounce(function (msg) {
+            lExec++;
+            leadingExecCount.textContent = lExec;
+            addLog(leadingLog, `🚀 执行 #${lExec} | "${msg}" (leading 立即执行)`, 'highlight');
+            updateLeadingStatus('executed');
+        }, 600, true);
+
+        document.getElementById('leadingBtn').addEventListener('click', function () {
+            lTrigger++;
+            leadingTriggerCount.textContent = lTrigger;
+            updateLeadingStatus('pending');
+            addLog(leadingLog, `⚡ 触发 #${lTrigger}`, 'muted');
+            leadingDebounced(`leading 点击 #${lTrigger}`);
+        });
+
+        document.getElementById('leadingReset').addEventListener('click', function () {
+            leadingDebounced.cancel();
+            lTrigger = 0;
+            lExec = 0;
+            leadingTriggerCount.textContent = '0';
+            leadingExecCount.textContent = '0';
+            leadingLog.innerHTML = '<div class="log-item muted">— 日志已重置 —</div>';
+            updateLeadingStatus('idle');
+        });
+
+
+        // ============================================================
+        //  4. 演示三：输入框防抖 + cancel / flush
+        // ============================================================
+        const searchInput = document.getElementById('searchInput');
+        const inputLog = document.getElementById('inputLog');
+
+        function addInputLog(msg, type = 'normal') {
+            const div = document.createElement('div');
+            div.className = 'log-item';
+            if (type === 'highlight') {
+                div.innerHTML = `<span class="highlight">${msg}</span>`;
+            } else if (type === 'muted') {
+                div.innerHTML = `<span class="muted">${msg}</span>`;
+            } else {
+                div.textContent = msg;
+            }
+            inputLog.appendChild(div);
+            inputLog.scrollTop = inputLog.scrollHeight;
+            while (inputLog.children.length > 50) {
+                inputLog.removeChild(inputLog.firstChild);
+            }
+        }
+
+        const inputDebounced = debounce(function (value) {
+            const timestamp = new Date().toLocaleTimeString();
+            addInputLog(`📝 [${timestamp}] 防抖输出：${value}`, 'highlight');
+        }, 400, false);
+
+        searchInput.addEventListener('input', function () {
+            const val = this.value.trim() || '(空)';
+            addInputLog(`⌨️ 输入：${val}`, 'muted');
+            inputDebounced(val);
+        });
+
+        document.getElementById('cancelBtn').addEventListener('click', function () {
+            inputDebounced.cancel();
+            addInputLog('✕ 已取消当前等待的防抖调用 (cancel)', 'muted');
+        });
+
+        document.getElementById('flushBtn').addEventListener('click', function () {
+            const val = searchInput.value.trim() || '(空)';
+            addInputLog(`▶ 手动 flush 当前值：${val}`, 'muted');
+            inputDebounced.flush();
+        });
+
+
+        // ============================================================
+        //  5. 附加：控制台暴露 debounce 方便调试
+        // ============================================================
+        console.log('🛠️ 可用调试：');
+        console.log('  ➜ debounce(fn, wait, leading)');
+        console.log('  ➜ 演示实例: trailingDebounced, leadingDebounced, inputDebounced');
+        console.log('  ➜ 每个实例都有 .cancel() 和 .flush() 方法');
+    </script>
+
+</body>
+</html>
+```
+### 防抖演示
+
+您可以在演示页面中直观地看到防抖函数在不同模式下的执行效果。
+
+*   **核心实现与演示**：页面顶部清晰展示了 `debounce` 函数的完整源码，并附带中文注释。下方提供了 **“基础防抖 (trailing)”** 和 **“Leading 模式”** 两个独立演示区，您可以通过快速点击按钮，观察触发次数与实际执行次数的差异，直观理解防抖的工作逻辑。
+*   **实用场景与工具方法**：第三个演示区模拟了“输入建议”场景。您在输入框中连续打字时，防抖函数会在您停止输入 400ms 后才输出结果。同时，该区域提供了 **`cancel()`** 和 **`flush()`** 按钮，让您能手动取消等待中的调用或立即执行当前缓存的调用，掌握防抖函数的进阶控制能力。
+*   **交互反馈与状态提示**：每个演示区都实时显示“触发次数”、“实际执行次数”以及当前状态（空闲/等待中/已执行）。日志区域会记录每一次触发和执行的详细信息，帮助您追踪函数的行为，加深理解。

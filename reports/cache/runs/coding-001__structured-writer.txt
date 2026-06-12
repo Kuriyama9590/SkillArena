@@ -1,0 +1,57 @@
+## 函数设计
+
+### 核心逻辑
+- **忽略大小写**：统一转换为小写（或大写）。
+- **忽略非字母数字**：仅保留 `str.isalnum()` 为 `True` 的字符。
+- **判断回文**：比较处理后的字符串与反转结果是否相等；或使用双指针从两端向中间扫描。
+
+### 实现方式（双指针）
+1. 初始化左指针 `left = 0`，右指针 `right = len(s) - 1`。
+2. 循环直到 `left >= right`：
+   - 若 `s[left]` 不是字母数字，`left += 1` 跳过。
+   - 若 `s[right]` 不是字母数字，`right -= 1` 跳过。
+   - 否则比较 `s[left].lower()` 与 `s[right].lower()`：
+     - 如果不相等，返回 `False`。
+     - 如果相等，`left += 1`，`right -= 1`。
+3. 循环结束返回 `True`。
+
+---
+
+## 代码实现
+
+```python
+def is_palindrome(s: str) -> bool:
+    left, right = 0, len(s) - 1
+    while left < right:
+        # 跳过左侧非字母数字
+        while left < right and not s[left].isalnum():
+            left += 1
+        # 跳过右侧非字母数字
+        while left < right and not s[right].isalnum():
+            right -= 1
+        # 比较忽略大小写后的字符
+        if s[left].lower() != s[right].lower():
+            return False
+        left += 1
+        right -= 1
+    return True
+```
+
+---
+
+## 测试示例
+
+| 输入                          | 输出    | 说明                     |
+|-------------------------------|---------|--------------------------|
+| `"A man, a plan, a canal: Panama"` | `True`  | 忽略标点和空格，不区分大小写 |
+| `"race a car"`               | `False` | 处理为 `"raceacar"`，不是回文 |
+| `" "`                        | `True`  | 空字符串视为回文          |
+| `"0P"`                       | `False` | `"0p"` 反转是 `"p0"`，不等     |
+| `"ab_a"`                     | `True`  | 忽略下划线，`"aba"` 是回文    |
+
+---
+
+## 复杂度分析
+
+- **时间复杂度**：`O(n)`，每个字符最多被访问一次。
+- **空间复杂度**：`O(1)`，只使用了两个指针变量，无额外存储（原地过滤）。

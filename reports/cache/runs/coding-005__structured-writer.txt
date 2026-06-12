@@ -1,0 +1,127 @@
+## 核心设计思路
+
+- **目标**：实现 `get(key)` 和 `put(key, value)` 均为 O(1) 时间复杂度。
+- **关键数据结构**：
+  - **双向链表**：维护键值对的访问顺序（最近使用的在头部，最久未使用的在尾部）。
+  - **哈希表（字典）**：存储 `key` 到链表节点的映射，实现 O(1) 定位。
+- **辅助功能**：
+  - 当容量满时，移除链表尾部节点（最久未使用）。
+  - 每次 `get` 或 `put` 已存在的 key 时，将该节点移动到链表头部。
+
+## 数据结构选择
+
+| 数据结构     | 作用                                         | 时间复杂度 |
+| ------------ | -------------------------------------------- | ---------- |
+| 哈希表       | 通过 key 快速找到对应的链表节点              | O(1)       |
+| 双向链表节点 | 存储 key-value，并带有前驱和后继指针         | O(1) 修改  |
+| 虚拟头尾节点 | 简化边界处理（插入、删除、移动时无需判空）   | O(1)       |
+
+## 操作说明
+
+### `get(key)`
+1. 如果 key 在哈希表中：
+   - 定位对应节点
+   - 将节点移动到链表头部（表示最近使用）
+   - 返回节点的 value
+2. 否则返回 -1。
+
+### `put(key, value)`
+1. 如果 key 已存在：
+   - 更新节点 value
+   - 移动节点到链表头部
+2. 否则：
+   - 创建新节点，插入链表头部
+   - 在哈希表中添加映射
+   - 如果容量超出限制，删除链表尾部节点及其哈希映射
+
+## Python 实现
+
+```python
+class Node:
+    """双向链表节点"""
+    def __init__(self, key=0, value=0):
+        self.key = key
+        self.value = value
+        self.prev = None
+        self.next = None
+
+class LRUCache:
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.cache = {}          # key -> Node
+        # 虚拟头尾节点
+        self.head = Node()
+        self.tail = Node()
+        self.head.next = self.tail
+        self.tail.prev = self.head
+
+    def _remove_node(self, node: Node):
+        """从链表中移除节点"""
+        node.prev.next = node.next
+        node.next.prev = node.prev
+
+    def _add_to_head(self, node: Node):
+        """将节点插入到头节点之后（第一个有效位置）"""
+        node.next = self.head.next
+        node.prev = self.head
+        self.head.next.prev = node
+        self.head.next = node
+
+    def _move_to_head(self, node: Node):
+        """将节点移动到头部（先移除再插入）"""
+        self._remove_node(node)
+        self._add_to_head(node)
+
+    def get(self, key: int) -> int:
+        if key not in self.cache:
+            return -1
+        node = self.cache[key]
+        self._move_to_head(node)   # 标记为最近使用
+        return node.value
+
+    def put(self, key: int, value: int) -> None:
+        if key in self.cache:
+            node = self.cache[key]
+            node.value = value
+            self._move_to_head(node)
+        else:
+            if len(self.cache) >= self.capacity:
+                # 移除最久未使用的节点（尾部节点）
+                lru_node = self.tail.prev
+                self._remove_node(lru_node)
+                del self.cache[lru_node.key]
+            # 创建新节点并插入头部
+            new_node = Node(key, value)
+            self._add_to_head(new_node)
+            self.cache[key] = new_node
+```
+
+## 复杂度分析
+
+| 操作 | 时间复杂度 | 空间复杂度 |
+|------|------------|------------|
+| get  | O(1)       | O(capacity)|
+| put  | O(1)       | O(capacity)|
+
+- **原因**：哈希表和链表操作（插入、删除、移动）均只需常数时间。
+
+## 测试用例
+
+```python
+cache = LRUCache(2)
+cache.put(1, 1)
+cache.put(2, 2)
+print(cache.get(1))       # 返回 1
+cache.put(3, 3)           # 删除 key=2
+print(cache.get(2))       # 返回 -1 (未找到)
+cache.put(4, 4)           # 删除 key=1
+print(cache.get(1))       # 返回 -1
+print(cache.get(3))       # 返回 3
+print(cache.get(4))       # 返回 4
+```
+
+## 行动建议
+
+- **面试中**：先明确要求 O(1)，然后解释哈希表+双向链表的原因。
+- **实现细节**：使用虚拟头尾节点简化边界判断。
+- **扩展思考**：若要求支持过期时间，可改为 `OrderedDict` 简化实现；若要求并发安全，需加锁。

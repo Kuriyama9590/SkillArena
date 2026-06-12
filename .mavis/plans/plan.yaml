@@ -1,0 +1,434 @@
+version: 1
+plan:
+  name: 'Skill 竞技场 — 完整闭环（MVP）'
+  max_concurrency: 4
+  max_consecutive_failures: 2
+  max_cycles: 8
+  auto_reject_retries: 1
+  verifier_config:
+    default_verifiers: [verifier]
+tasks:
+  - id: core-infra
+    title: '核心基础设施：skill runner + Elo 评判引擎 + 固定任务集'
+    prompt: |
+      在工作目录 E:\Projects\skill竞技场 下搭建 skill 竞技场的基础设施模块。这是整个系统的基石，必须能独立运行（不依赖其它任务）。
+
+      ## 必须产出的文件与功能
+
+      ### 1. 项目骨架
+      ```
+      skill竞技场/
+      ├── arena/
+      │   ├── __init__.py
+      │   ├── config.py          # 统一配置（API key 从环境变量 DEEPSEEK_API_KEY 读取）
+      │   ├── deepseek_client.py # DeepSeek API 客户端封装（基于官方 openai 兼容接口）
+      │   ├── runner.py          # 加载 skill + 调用执行模型
+      │   ├── judge.py           # 调用评判模型做 Elo 对战
+      │   ├── elo.py             # Elo 算法实现（标准 Elo，K=32）
+      │   └── report.py          # 生成 Markdown 对比报告
+      ├── skills/                # 内置 3 个示例 skill（供自测试）
+      │   ├── concise-writer.md  # 简洁写作风格
+      │   ├── detailed-writer.md # 详细写作风格
+      │   └── structured-writer.md # 结构化写作风格
+      ├── tasks/
+      │   └── fixed/
+      │       ├── writing.yaml   # 写作类任务 3-5 个
+      │       ├── coding.yaml    # 编程类任务 3-5 个
+      │       └── analysis.yaml  # 分析类任务 3-5 个
+      ├── reports/               # 空目录，输出报告存放
+      ├── tests/
+      │   ├── test_elo.py        # Elo 算法单测（≥5 个用例，含 K=32 边界）
+      │   ├── test_runner.py     # skill 加载 + 调用 mock 测试
+      │   └── test_judge.py      # judge prompt 构造测试
+      ├── pyproject.toml         # 项目依赖：openai, pyyaml, pytest, pydantic
+      ├── .env.example           # DEEPSEEK_API_KEY=xxx 占位
+      └── README.md              # 用法说明
+      ```
+
+      ### 2. 关键模块设计
+
+      **deepseek_client.py**：
+      - 封装 OpenAI 兼容客户端，base_url 用 `https://api.deepseek.com/v1`
+      - 提供两个方法：`execute(messages, model="deepseek-v4-flash")` 和 `judge(messages, model="deepseek-v4-pro")`
+      - 支持重试（指数退避，最多 3 次）
+      - 支持 timeout=120s
+      - 如果 DEEPSEEK_API_KEY 未设置，raise 明确错误（不要静默）
+
+      **runner.py**：
+      - `load_skill(skill_path: str) -> str`：读取 skill 文件完整内容
+      - `run_with_skill(task: str, skill_content: str | None, model: str) -> str`：把 skill 作为 system message 注入，裸 prompt 时 skill_content=None
+      - 返回产物的字符串内容 + token 统计
+
+      **judge.py**：
+      - `compare(task: str, output_a: str, output_b: str, skill_a: str, skill_b: str, model="deepseek-v4-pro") -> Verdict`
+      - 内部 prompt 必须包含：原始任务、A/B 产物（匿名标注为 Response A / Response B）、评判维度清单（correctness, completeness, clarity, creativity）
+      - 输出严格 JSON：`{"winner": "A" | "B" | "tie", "scores": {"A": {...}, "B": {...}}, "reasoning": "..."}`
+      - 用 pydantic 做 schema 校验 + 重试解析
+
+      **elo.py**：
+      - 纯函数 Elo 计算，K=32，初始分 1500
+      - `update_rating(rating_a, rating_b, score) -> tuple[float, float]`，score in {1.0, 0.5, 0.0}
+      - 支持批量：`run_round(pairs: list[(name_a, name_b, score)]) -> dict[name, rating]`
+      - 状态持久化到 `reports/elo_state.json`
+
+      **report.py**：
+      - `generate_report(records: list[MatchResult], elo_state: dict) -> Path`
+      - 输出 Markdown，包含：总场次、Elo 排行榜、每个 skill 的胜率、平均分、最近 10 场明细
+
+      ### 3. 固定任务集（tasks/fixed/*.yaml）
+      每个任务格式：
+      ```yaml
+      - id: writing-001
+        category: writing
+        prompt: "写一段关于远程办公利弊的短文，200 字以内"
+        reference: null   # 可选参考答案
+        difficulty: easy
+      ```
+      写作 3-5 个、编程 3-5 个、分析 3-5 个，覆盖不同难度。
+
+      ### 4. 三个内置 skill（每个 100-300 字）
+      - concise-writer：强调简洁、直接、有重点
+      - detailed-writer：强调详尽、举例、铺垫
+      - structured-writer：强调分点、表格、层级
+
+      ### 5. 测试要求
+      - `pytest tests/` 必须全部通过
+      - Elo 单测覆盖：平局、A 胜、B 胜、跨多轮累计、初始分
+      - runner / judge 用 monkeypatch mock API 调用，不打真实网络
+
+      ### 6. 文档
+      - README.md 必须包含：项目目的、目录结构、如何添加新 skill、如何添加新任务、如何运行一次完整对比（命令行示例）、Elo 计算原理简述
+
+      ## 约束
+      - Python 3.10+，用 pydantic v2
+      - 所有 API key 走环境变量，**严禁硬编码**
+      - 所有外部 API 调用必须有重试 + 超时
+      - 代码风格：类型注解完整，docstring 中文
+      - 提交完整代码 + 测试通过报告（pytest 输出）
+
+      ## 交付物
+      - 在 `E:\Projects\skill竞技场` 下产出全部上述文件
+      - 在 `E:\Projects\skill竞技场\deliverable-core-infra.md` 写一份交付总结：
+        * 实际产出的文件清单
+        * pytest 输出（最后 30 行）
+        * 如何运行一次对比的示例命令
+        * 已知限制
+    assigned_to: coder
+    verified_by: [verifier, coder]
+    verify_prompt:
+      verifier: |
+        独立审查 E:\Projects\skill竞技场 下的产出：
+        1. 运行 `pytest tests/ -v` 在工作目录，确认全部通过（贴最后 30 行输出）
+        2. 检查 deepseek_client.py：确认 base_url、模型名、环境变量名正确；确认无硬编码 key
+        3. 检查 elo.py：手算 3 个用例对比实现（K=32，初始 1500，A 胜时新分），结果必须一致
+        4. 检查 runner.py：模拟一个 task + 一个 skill_content，验证 system message 注入逻辑正确
+        5. 检查 judge.py：构造一个 judge prompt，确认 prompt 模板包含 task + 两个匿名产物 + 评判维度
+        6. 检查三个内置 skill 文件：长度 100-300 字、内容确实是不同风格
+        7. 检查固定任务集：每类 3-5 个、格式符合 schema
+        8. 故意构造一个 Elo 平局场景，确认不抛异常且分值正确
+        任一不通过则 FAIL，给出精确修复指引。
+      coder: |
+        代码 review 视角：
+        - 模块划分是否合理（runner/judge/elo/client 各司其职）
+        - pydantic schema 是否覆盖 judge 的所有输出字段
+        - 错误处理：API 失败、超时、JSON 解析失败是否有合理兜底
+        - 可扩展性：添加新 skill / 新任务是否零代码改动
+        - 文档完整性：README 是否能让新人 10 分钟内跑通
+    timeout_ms: 1800000
+
+  - id: fusion-engine
+    title: '融合引擎 + skill 自改进迭代'
+    prompt: |
+      在 core-infra 已搭建的基础上，实现两个核心能力：
+      1. skill 优点融合（取两个 skill 的优点生成 v3）
+      2. skill 自改进（基于评判反馈迭代优化）
+
+      工作目录：E:\Projects\skill竞技场
+
+      ## 必须产出的文件
+
+      ### 1. arena/fuse.py
+      - `fuse_skills(skill_a_content: str, skill_a_name: str, skill_b_content: str, skill_b_name: str, task_context: str, judge_feedback: str, model="deepseek-v4-pro") -> str`
+      - 输入：两个 skill 全文 + 它们在对比中的表现（judge 给出的 strengths / weaknesses）+ 任务上下文
+      - 内部 prompt 要求 v4-pro 输出新 skill，要求：
+        * 保留 A 的强项 + B 的强项
+        * 避免 A 和 B 的弱项
+        * 输出严格按 markdown 格式（标题、核心原则、行为约束、示例）
+        * 长度 150-400 字
+      - 解析输出并返回 skill 文本
+      - 失败时 raise 带上下文的异常
+
+      ### 2. arena/self_improve.py
+      - `improve_skill(skill_content: str, skill_name: str, weaknesses: list[str], model="deepseek-v4-pro") -> str`
+      - 输入：当前 skill + 它在最近 N 场 Elo 对战中被 pro 标记的 weakness 列表
+      - 内部 prompt 要求 v4-pro：
+        * 针对每个 weakness 给具体修改建议
+        * 输出完整的新 skill 文本（不是 patch）
+        * 必须保留原 skill 中未被批评的部分
+      - 提供一个 `run_improvement_cycle(skill_name, max_iterations=3, target_elo_delta=20) -> ImprovementReport`
+        * 循环：评估当前 skill 的 Elo → 收集 weaknesses → 调用 improve → 用新 skill 重跑 N 场 → 看 Elo 提升
+        * 达到 target_elo_delta 或 max_iterations 停止
+        * 返回 ImprovementReport（每轮的 skill 版本、Elo、提升幅度）
+
+      ### 3. tests/test_fuse.py
+      - 用 monkeypatch mock 掉 deepseek API
+      - 测试：
+        * fuse_skills 能正确处理 judge_feedback 为空的情况
+        * fuse_skills 输出长度在 150-400 字之间
+        * fuse_skills prompt 模板包含 A 和 B 的核心差异
+      - 至少 4 个用例
+
+      ### 4. tests/test_self_improve.py
+      - mock API
+      - 测试：
+        * improve_skill 输入空 weaknesses 时直接返回原 skill
+        * run_improvement_cycle 在 Elo 提升达标时提前终止
+        * run_improvement_cycle 在达到 max_iterations 时强制终止
+      - 至少 4 个用例
+
+      ### 5. arena/orchestrator.py（最小骨架版，仅声明接口，不实现完整流程）
+      - 定义 `class ArenaOrchestrator` 雏形，包含方法签名：
+        ```python
+        def run_full_cycle(self, skill_paths: list[str], task_set: str = "fixed") -> Report
+        def run_fusion(self, skill_a: str, skill_b: str) -> str
+        def run_self_improvement(self, skill_path: str) -> ImprovementReport
+        ```
+      - 实际完整实现在 e2e-orchestrator 任务里做，这里只搭骨架 + 单元测试覆盖
+
+      ### 6. 示例文档
+      - `E:\Projects\skill竞技场\docs\fusion-examples.md`：手写 2 个融合前后对比示例（不需要真实跑 API，写得合理即可），展示融合效果
+      - `E:\Projects\skill竞技场\docs\self-improve-examples.md`：同上，展示自改进前后对比
+
+      ## 约束
+      - 复用 core-infra 的 deepseek_client.py，不要重写 API 调用
+      - fuse 和 improve 输出必须是可用的 skill 文本，能直接保存为 .md 文件
+      - 所有 v4-pro 调用必须有 fallback：如果模型返回非预期格式，重试一次，仍然失败则 raise
+      - pytest tests/test_fuse.py tests/test_self_improve.py 必须全部通过
+
+      ## 交付物
+      - 全部上述文件
+      - `E:\Projects\skill竞技场\deliverable-fusion-engine.md`：交付总结
+        * 文件清单
+        * pytest 输出
+        * 两个示例文档的位置
+        * 如何手动触发一次融合（命令行示例）
+        * 如何手动触发一次自改进循环（命令行示例）
+    assigned_to: coder
+    depends_on: [core-infra]
+    verified_by: [verifier, coder]
+    verify_prompt:
+      verifier: |
+        独立审查 E:\Projects\skill竞技场 下 fusion-engine 产出：
+        1. 运行 `pytest tests/test_fuse.py tests/test_self_improve.py -v`，确认全部通过
+        2. 检查 fuse_skills 的 prompt：必须包含 judge_feedback、两个 skill 的 strengths/weaknesses、输出格式约束（150-400字）
+        3. 检查 improve_skill 的 prompt：必须针对每个 weakness 给出具体修改
+        4. 检查 run_improvement_cycle：逻辑上能在 Elo 达标时提前终止，且最终报告包含每轮的 skill 版本和 Elo
+        5. 用 mock 模拟：fuse_skills 返回的 skill 文本长度必须在 150-400
+        6. 用 mock 模拟：improve_skill 在 weaknesses 为空时返回原 skill（字节级相等）
+        7. 检查 orchestrator.py 骨架：三个方法签名存在，docstring 说明意图
+        任一不通过则 FAIL。
+      coder: |
+        代码 review：
+        - fuse 和 improve 的 prompt 工程是否合理（清晰的 role / context / task / format 四段）
+        - 是否复用了 deepseek_client.py 而非另起炉灶
+        - 错误处理：API 异常、输出格式异常、超时
+        - run_improvement_cycle 的终止条件是否清晰可测
+        - 示例文档是否展示了真实的对比价值，不是空泛描述
+    timeout_ms: 1800000
+
+  - id: auto-tasks
+    title: '自动出题模块（v4-pro 动态生成测试任务）'
+    prompt: |
+      在 core-infra 已搭建的基础上，实现"由 v4-pro 动态生成测试任务"的能力，扩展竞技场的任务来源。
+
+      工作目录：E:\Projects\skill竞技场
+
+      ## 必须产出的文件
+
+      ### 1. arena/task_generator.py
+      - `class TaskGenerator`
+      - 方法 `generate_batch(category: str, count: int, difficulty: str, model="deepseek-v4-pro") -> list[Task]`
+      - 内部 prompt 要求 v4-pro：
+        * 给定 category（writing/coding/analysis）和 difficulty（easy/medium/hard）
+        * 生成 count 个多样化、不重复的测试任务
+        * 每个任务必须包含：id、category、prompt、difficulty、（可选）reference
+        * 输出严格 JSON 数组
+      - 用 pydantic 校验输出，失败的项 retry 一次（最多 2 次），仍失败则跳过该项并记 warning
+      - 支持类别白名单：writing / coding / analysis / reasoning / explanation
+      - 提供一个 `save_to_fixed(tasks: list[Task], target_file: Path)` 方法，把生成的任务合并到固定任务集
+
+      ### 2. arena/task_dedup.py
+      - `class TaskDeduplicator`
+      - 方法 `is_duplicate(new_task: Task, existing_tasks: list[Task], threshold: float = 0.85) -> bool`
+      - 用 sentence-transformers 或简单的 jaccard 相似度（如果不想加重依赖就用 jaccard）
+      - 缓存 embedding（如可用）
+      - 提供 `add_unique(new_task, existing) -> list[Task]`
+
+      ### 3. tests/test_task_generator.py
+      - mock 掉 v4-pro 调用
+      - 测试：
+        * 生成 count=5 时返回 5 个 Task（即使有失败也记录 warning）
+        * 生成的 Task id 唯一
+        * 同一 category 内 prompt 不完全相同（粗略文本比较）
+        * pydantic 校验失败的项被跳过
+      - 至少 4 个用例
+
+      ### 4. tests/test_task_dedup.py
+      - 测试：
+        * 完全相同文本被识别为重复
+        * 部分重复文本在 threshold=0.85 时被识别为重复
+        * 完全不同文本不被识别为重复
+        * add_unique 只添加真正唯一的任务
+      - 至少 4 个用例
+
+      ### 5. tasks/auto/ 目录
+      - 创建该目录，添加 README 说明：自动生成的任务会自动落到这里
+      - 提供一个示例预生成文件 `tasks/auto/example-batch-001.yaml`，手写 3 个合理任务作为格式示范（不需要真实调用 API）
+
+      ## 约束
+      - 复用 deepseek_client.py
+      - 如果用 sentence-transformers，要在 pyproject.toml 里加进 optional dependencies，避免强制安装
+      - 优先用 jaccard 相似度（轻量、无额外依赖）
+      - 所有生成任务必须带唯一 id（格式：{category}-{auto}-{6位hash}）
+      - pytest tests/test_task_generator.py tests/test_task_dedup.py 必须通过
+
+      ## 交付物
+      - 全部上述文件
+      - `E:\Projects\skill竞技场\deliverable-auto-tasks.md`：交付总结
+        * 文件清单
+        * pytest 输出
+        * 如何手动生成一批任务并保存的命令示例
+        * 去重算法的选择理由
+    assigned_to: coder
+    depends_on: [core-infra]
+    verified_by: [verifier, coder]
+    verify_prompt:
+      verifier: |
+        独立审查：
+        1. 运行相关 pytest，全部通过
+        2. 检查 generate_batch 的 prompt：是否明确指定了 category/difficulty/count，输出格式约束是否清晰
+        3. 用 mock 模拟 v4-pro 返回格式异常的响应，确认 TaskGenerator 能优雅跳过而非崩溃
+        4. 用 mock 模拟返回重复 prompt，确认去重生效
+        5. 检查生成的 Task id 格式：必须是 {category}-auto-{6位hash}
+        6. 检查 add_unique：传入 3 个任务（1 个重复 + 2 个新），返回应该是 2 个
+        7. 检查 tasks/auto/example-batch-001.yaml：格式正确、3 个任务、id 符合规范
+        任一不通过则 FAIL。
+      coder: |
+        代码 review：
+        - prompt 工程是否能让 v4-pro 输出稳定 JSON（指令清晰度）
+        - pydantic 校验失败的兜底是否合理（warning 而非 raise）
+        - 去重算法的选择是否合理（jaccard 在小样本下够用）
+        - 任务 id 生成是否防碰撞
+    timeout_ms: 1800000
+
+  - id: e2e-orchestrator
+    title: '主编排器 + 端到端集成验证（完整闭环打通）'
+    prompt: |
+      在前三个任务都已完成的基础上，实现完整的主编排逻辑，并跑通一次端到端验证。
+
+      工作目录：E:\Projects\skill竞技场
+
+      ## 必须产出的文件
+
+      ### 1. 完善 arena/orchestrator.py
+      - 完整实现 `class ArenaOrchestrator`
+      - 方法：
+
+      ```python
+      def run_full_cycle(
+          self,
+          skill_paths: list[str],
+          task_source: str = "fixed",   # "fixed" | "auto" | "hybrid"
+          auto_categories: list[str] | None = None,  # 当 task_source=auto/hybrid 时使用
+          auto_per_category: int = 3,
+          rounds_per_pair: int = 2,    # 每个任务对每个 skill pair 跑多少轮 Elo
+      ) -> FullReport:
+          """
+          完整流程：
+          1. 加载所有 skill
+          2. 加载/生成任务集
+          3. 阶段 A — 对比竞技：
+             对每个任务，让每个 skill（含裸 prompt）跑一遍得到产物
+             对产物两两配对，让 v4-pro 评判，更新 Elo
+          4. 阶段 B — 融合：
+             取 Elo Top 2 的 skill 做融合，生成 v3_fused
+          5. 阶段 C — 自改进：
+             取 Elo Bottom 1 的 skill 跑 self_improve 循环
+          6. 阶段 D — 总报告：
+             合并所有 Elo、融合结果、改进结果，生成 Markdown 报告
+          """
+      ```
+
+      - `run_fusion(self, skill_a_path: str, skill_b_path: str) -> Path`：返回融合后 skill 的保存路径
+      - `run_self_improvement(self, skill_path: str, max_iterations: int = 3) -> ImprovementReport`
+
+      - 必须支持断点续跑：每完成一个阶段就把状态写到 `reports/orchestrator_state.json`，下次启动能接着跑
+
+      ### 2. CLI 入口
+      - 在 `arena/__main__.py` 实现命令行入口
+      - 支持子命令：
+        * `python -m arena run --skills skills/ --task-source hybrid --auto-per-category 2`
+        * `python -m arena fuse --a skills/A.md --b skills/B.md --output skills/A_B_fused.md`
+        * `python -m arena improve --skill skills/X.md --max-iter 3`
+        * `python -m arena report`  # 重新生成报告
+
+      ### 3. tests/test_orchestrator.py
+      - mock 掉所有 v4-flash 和 v4-pro 调用
+      - 测试：
+        * run_full_cycle 在 mock 下能跑完所有阶段（A/B/C/D）
+        * 断点续跑：从已有 state.json 启动，能跳过已完成阶段
+        * Elo 在阶段 A 结束后被正确更新
+        * 阶段 B 输出文件存在且长度合理
+        * 阶段 C 的 ImprovementReport 包含每轮的 skill 版本
+      - 至少 5 个用例
+
+      ### 4. README.md 更新
+      - 增加"完整闭环使用"章节，给出从安装到运行一次完整竞技的端到端命令
+      - 增加"添加自己的 skill"章节
+      - 增加"扩展任务集"章节
+
+      ### 5. 端到端冒烟测试
+      - `tests/test_e2e_smoke.py`
+      - **真实调用 deepseek API**（用最少配置：1 个 skill、1 个任务、rounds=1）
+      - 用环境变量控制是否启用（默认 skip，除非设 RUN_E2E_SMOKE=1）
+      - 验证：完整 run_full_cycle 能跑通、Elo 文件被写入、报告被生成
+      - 失败时给出明确的环境检查指引（key 是否设置、网络是否可达）
+
+      ## 约束
+      - 必须复用 core-infra / fusion-engine / auto-tasks 的所有模块，不要重复实现
+      - 完整 run_full_cycle 在 mock 下的总测试时间不超过 30 秒
+      - 端到端冒烟测试用最少的 API 调用（≤10 次）以节省费用
+      - 所有写文件操作都用 Path，跨平台兼容
+      - pytest tests/test_orchestrator.py 必须全部通过
+
+      ## 交付物
+      - 全部上述文件
+      - `E:\Projects\skill竞技场\deliverable-e2e-orchestrator.md`：最终交付总结
+        * 完整文件清单（按目录树）
+        * 所有 pytest 输出汇总
+        * 完整闭环运行的真实命令
+        * 架构总览图（用 mermaid 描述模块依赖）
+        * 已知限制和后续优化方向
+        * MVP 验收清单：每条勾选完成情况
+    assigned_to: coder
+    depends_on: [core-infra, fusion-engine, auto-tasks]
+    verified_by: [verifier, coder]
+    verify_prompt:
+      verifier: |
+        端到端独立审查：
+        1. 运行 `pytest tests/ -v --ignore=tests/test_e2e_smoke.py`（跳过需要真实 API 的冒烟测试），全部通过
+        2. 检查 orchestrator.py 的 run_full_cycle：四个阶段（A/B/C/D）齐全、执行顺序合理、断点续跑逻辑成立
+        3. 检查 CLI 入口：四个子命令都能被 argparse 正确解析
+        4. 检查 README.md：是否包含从安装到运行完整闭环的命令
+        5. 检查 deliverable 文件：是否包含完整的 MVP 验收清单
+        6. 用 mock 模拟一次完整 run_full_cycle，确认总耗时 < 30 秒、Elo 状态文件被写入、报告路径存在
+        7. 故意破坏 state.json（删一个阶段标记），确认断点续跑能从断点恢复
+        任一不通过则 FAIL，给出精确修复指引。
+      coder: |
+        最终代码 review：
+        - 整体架构是否符合"职责清晰、易扩展、易测试"原则
+        - 模块间的耦合是否合理（orchestrator 是否过度依赖子模块的内部细节）
+        - 错误传播：某个阶段失败时是否能优雅降级（而非全盘崩溃）
+        - 文档是否完整到新人可以独立运行
+        - 是否有明显的性能浪费（如重复加载 skill、重复初始化 client）
+    timeout_ms: 1800000

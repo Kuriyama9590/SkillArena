@@ -1,0 +1,29 @@
+- id: coding-001
+  category: coding
+  prompt: "用 Python 实现一个函数 is_palindrome(s: str) -> bool,判断字符串是否为回文(忽略大小写和非字母数字字符)"
+  reference: null
+  difficulty: easy
+
+- id: coding-002
+  category: coding
+  prompt: "写一个 SQL 查询:从 orders 表(order_id, user_id, amount, created_at)找出 2024 年消费总额前 10 的用户"
+  reference: null
+  difficulty: medium
+
+- id: coding-003
+  category: coding
+  prompt: "用 JavaScript 写一个函数 debounce(fn, wait),实现函数防抖"
+  reference: null
+  difficulty: medium
+
+- id: coding-004
+  category: coding
+  prompt: "解释 Python GIL 是什么,为什么存在,以及它如何影响多线程程序;300 字以内"
+  reference: null
+  difficulty: hard
+
+- id: coding-005
+  category: coding
+  prompt: "设计一个 LRU Cache,要求 get 和 put 都是 O(1),用 Python 实现并附简要思路说明"
+  reference: null
+  difficulty: hard

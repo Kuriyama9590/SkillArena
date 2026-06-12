@@ -1,0 +1,8 @@
+```sql
+SELECT user_id, SUM(amount) AS total_amount
+FROM orders
+WHERE YEAR(created_at) = 2024
+GROUP BY user_id
+ORDER BY total_amount DESC
+LIMIT 10;
+```
