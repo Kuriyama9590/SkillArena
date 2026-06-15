@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -6,11 +7,31 @@ __pycache__/
 .mypy_cache/
 .coverage
 htmlcov/
-.env
-reports/elo_state.json
-.venv/
-venv/
 *.egg-info/
 build/
 dist/
+
+# Virtual envs
+.venv/
+venv/
+
+# Secrets
+.env
+
+# Arena runtime state & generated artifacts (repo keeps source/docs only;
+# these are produced by `python -m arena run` and tests)
+reports/orchestrator_state.json
+reports/elo_state*.json
+reports/cache/
+reports/fused/
+reports/improved/
+reports/report_*.md
+reports/_pytest_*.log
+
+# User-imported skills are personal; keep the dir but ignore its contents
+import_skills/*
+!import_skills/.gitkeep
+
+# Editor / tooling
 .opencode/
+.claude/

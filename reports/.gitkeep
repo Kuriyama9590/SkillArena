@@ -1,0 +1,3 @@
+# 运行时输出目录:Elo 状态、orchestrator 断点状态、产物缓存、生成的 Markdown 报告
+# 都落在这里。这些产物已被 .gitignore 排除,本文件仅用于让空目录能被 git 跟踪。
+# 首次 `python -m arena run` 或 `pytest tests/` 会自动填充本目录。

@@ -1,0 +1,4 @@
+# 把你想导入的 skill 文件(.md / .txt / .yaml / .yml)放到这个目录,
+# 然后运行:python scripts/import_user_skills.py
+# 脚本会把它们入库到 skills/imported-<原名>.md,并自动加来源注释头。
+# 本文件(.gitkeep)仅用于让空目录能被 git 跟踪,不会被脚本当作 skill 扫描。
