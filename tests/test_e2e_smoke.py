@@ -138,7 +138,7 @@ class TestE2ESmoke:
                 rounds_per_pair=1,
                 run_fusion=False,
                 run_improvement=False,
-                max_improve_iterations=0,
+                max_improve_iterations=1,
                 report_title="e2e_smoke · 单 skill 端到端",
             )
 

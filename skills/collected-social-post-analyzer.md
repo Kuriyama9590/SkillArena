@@ -1,3 +1,7 @@
+---
+domains: [analysis]
+---
+
 # Source: https://prompts.chat/prompts/cmq89qfo80001kz04hq3h6out_social-media-post-analyzer
 # Collected: 2026-06-12
 # Category: analysis

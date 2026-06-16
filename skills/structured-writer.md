@@ -1,3 +1,7 @@
+---
+domains: [writing]
+---
+
 # Structured Writer · 结构化写作风格
 
 ## 核心原则

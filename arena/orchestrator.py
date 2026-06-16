@@ -43,9 +43,9 @@ from .config import (
     ensure_reports_dir,
 )
 from .deepseek_client import CompletionResult, DeepSeekClient
-from .elo import load_state, save_state
+from .elo import load_domain_state, load_state, save_domain_state, save_state, update_rating
 from .fuse import fuse_skills
-from .judge import Verdict, compare
+from .judge import DimensionScores, Verdict, compare
 from .report import MatchResult, generate_report
 from .runner import RunOutput, load_skill, run_with_skill
 from .self_improve import (
@@ -53,7 +53,8 @@ from .self_improve import (
     ImprovementReport,
     run_improvement_cycle,
 )
-from .task_dedup import TaskDeduplicator
+from .skill_metadata import SkillEntry, TASK_DOMAINS, load_skill_entry
+from .task_dedup import TaskDeduplicator, jaccard_similarity
 from .task_generator import Task, TaskGenerator
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ ORCHESTRATOR_STATE_FILE: Path = REPORTS_DIR / "orchestrator_state.json"
 RUNS_CACHE_DIR: Path = REPORTS_DIR / "cache" / "runs"
 FUSED_DIR: Path = REPORTS_DIR / "fused"
 IMPROVED_DIR: Path = REPORTS_DIR / "improved"
+MATCHES_LOG: Path = REPORTS_DIR / "matches.jsonl"
 
 # 状态 schema 版本号(改变 schema 时 +1,旧 state.json 视为不兼容)
 STATE_SCHEMA_VERSION: int = 1
@@ -127,6 +129,7 @@ class ArenaOrchestrator:
         runs_cache_dir: Path | None = None,
         fused_dir: Path | None = None,
         improved_dir: Path | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._client = client
         self._elo_state_path = elo_state_path
@@ -134,6 +137,20 @@ class ArenaOrchestrator:
         self._runs_cache_dir = runs_cache_dir or RUNS_CACHE_DIR
         self._fused_dir = fused_dir or FUSED_DIR
         self._improved_dir = improved_dir or IMPROVED_DIR
+        self._progress_cb = progress_callback
+
+    def _emit(self, event: dict[str, Any]) -> None:
+        """进度事件埋点:若注入了 progress_callback 则调用。
+
+        事件协议见 arena.orchestrator 文档。所有事件 dict 必须包含 `type` 字段。
+        异常被静默吞掉,避免回调错误中断编排。
+        """
+        if self._progress_cb is None:
+            return
+        try:
+            self._progress_cb(event)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("_emit 回调失败: %s", exc)
 
     # ============================================================
     # 端到端主入口
@@ -180,6 +197,8 @@ class ArenaOrchestrator:
             )
         if rounds_per_pair < 1:
             raise ValueError("rounds_per_pair 必须 >= 1")
+        if max_improve_iterations < 1:
+            raise ValueError("max_improve_iterations 必须 >= 1")
 
         # ---- 1. 加载 / 准备 state ----
         if skip_state:
@@ -199,7 +218,7 @@ class ArenaOrchestrator:
                 )
 
         # ---- 2. 加载 skill ----
-        skills: dict[str, str] = self._load_skills(skill_paths)
+        skills: dict[str, SkillEntry] = self._load_skills(skill_paths)
 
         # ---- 3. 加载 / 生成任务集 ----
         tasks: list[dict[str, Any]] = self._resolve_tasks(
@@ -208,60 +227,103 @@ class ArenaOrchestrator:
             auto_per_category=auto_per_category,
         )
 
+        self._emit({
+            "type": "cycle_start",
+            "task_source": task_source,
+            "skill_count": len(skills),
+            "task_count": len(tasks),
+            "rounds_per_pair": rounds_per_pair,
+            "max_improve_iterations": max_improve_iterations,
+            "run_fusion": run_fusion,
+            "run_improvement": run_improvement,
+        })
+
         # ---- 阶段 A:对比竞技 + Elo ----
+        self._emit({"type": "phase_start", "phase": "A"})
         matches: list[MatchResult] = self._phase_arena(
             state=state,
             skills=skills,
             tasks=tasks,
             rounds_per_pair=rounds_per_pair,
         )
-        # Elo 状态从 state 读(阶段 A 已落盘)
-        elo_state = self._read_elo_state()
+        self._emit({"type": "phase_done", "phase": "A", "match_count": len(matches)})
+        # Elo 状态从 domain_elo 读(阶段 A 已落盘)
+        domain_elo = self._read_domain_elo_state()
 
-        # ---- 阶段 B:融合 Top2 ----
+        # ---- 阶段 B:按领域融合 Top2 ----
         fused_path: Path | None = None
         fused_content: str = ""
-        if run_fusion and len(elo_state) >= 2:
-            top_two = self._top_k_skills(elo_state, k=2)
-            if len(top_two) == 2:
-                fused_path, fused_content = self._phase_fusion(
-                    state=state,
-                    skill_a_path=top_two[0],
-                    skill_b_path=top_two[1],
-                    skills=skills,
-                    output_name=fused_output_name,
-                )
-        elif run_fusion and len(elo_state) < 2:
-            logger.warning(
-                "阶段 B 跳过:Elo 选手数 < 2 (当前 %d),无法融合", len(elo_state)
-            )
+        if run_fusion:
+            self._emit({"type": "phase_start", "phase": "B"})
+            for domain in TASK_DOMAINS:
+                elo_dom = domain_elo.get(domain, {})
+                non_baseline = {n: r for n, r in elo_dom.items() if not n.startswith("baseline")}
+                if len(non_baseline) >= 2:
+                    top_two = self._top_k_skills(elo_dom, k=2)
+                    if len(top_two) == 2:
+                        fp, fc = self._phase_fusion(
+                            state=state,
+                            skill_a_path=top_two[0],
+                            skill_b_path=top_two[1],
+                            skills=skills,
+                            output_name=fused_output_name,
+                            domain=domain,
+                        )
+                        if fused_path is None:
+                            fused_path = fp
+                            fused_content = fc
+                else:
+                    self._emit({
+                        "type": "phase_b_skip",
+                        "domain": domain,
+                        "reason": "选手不足 2",
+                    })
+                    logger.info("阶段 B: 领域 %s 选手不足 2,跳过融合", domain)
+            self._emit({"type": "phase_done", "phase": "B"})
 
-        # ---- 阶段 C:自改进 Bottom1 ----
+        # ---- 阶段 C:按领域自改进 Bottom1 ----
         improvement: ImprovementReport | None = None
         bottom_skill: str | None = None
-        if run_improvement and elo_state:
-            bottom_skill = self._bottom_skill(elo_state)
-            if bottom_skill and bottom_skill in skills:
-                improvement = self._phase_improvement(
-                    state=state,
-                    skill_name=bottom_skill,
-                    skill_content=skills[bottom_skill],
-                    max_iterations=max_improve_iterations,
-                )
-        elif run_improvement and not elo_state:
-            logger.warning("阶段 C 跳过:Elo 选手数 = 0,无法选择 bottom skill")
+        if run_improvement:
+            self._emit({"type": "phase_start", "phase": "C"})
+            for domain in TASK_DOMAINS:
+                elo_dom = domain_elo.get(domain, {})
+                non_baseline = {n: r for n, r in elo_dom.items() if not n.startswith("baseline")}
+                if non_baseline:
+                    bottom = self._bottom_skill(elo_dom)
+                    if bottom and bottom in skills:
+                        imp = self._phase_improvement(
+                            state=state,
+                            skill_name=bottom,
+                            skill_content=skills[bottom].content,
+                            max_iterations=max_improve_iterations,
+                            domain=domain,
+                        )
+                        if improvement is None:
+                            improvement = imp
+                            bottom_skill = bottom
+                else:
+                    self._emit({
+                        "type": "phase_c_skip",
+                        "domain": domain,
+                        "reason": "无可用 skill",
+                    })
+            self._emit({"type": "phase_done", "phase": "C"})
 
         # ---- 阶段 D:总报告 ----
+        self._emit({"type": "phase_start", "phase": "D"})
         report_path = self._phase_report(
             state=state,
             matches=matches,
-            elo_state=elo_state,
+            elo_state={},
             fused_path=fused_path,
             fused_content=fused_content,
             improvement=improvement,
             bottom_skill=bottom_skill,
             title=report_title,
+            domain_elo=domain_elo,
         )
+        self._emit({"type": "phase_done", "phase": "D", "report_path": str(report_path)})
 
         # 写入最终完成标记
         if not skip_state:
@@ -269,9 +331,24 @@ class ArenaOrchestrator:
             state["finished_at"] = _now_iso()
             self._save_state(state)
 
+        # 扁平化 elo_state 兼容 FullReport
+        flat_elo: dict[str, float] = {}
+        for domain, ratings in domain_elo.items():
+            for name, rating in ratings.items():
+                flat_elo[f"{domain}::{name}"] = rating
+
+        self._emit({
+            "type": "cycle_complete",
+            "match_count": len(matches),
+            "report_path": str(report_path) if report_path else None,
+            "fused_skill": str(fused_path) if fused_path else None,
+            "bottom_skill": bottom_skill,
+            "improvement_iterations": improvement.total_iterations if improvement else 0,
+        })
+
         return FullReport(
             title=report_title,
-            elo_state=elo_state,
+            elo_state=flat_elo,
             matches=matches,
             fused_skill=fused_path,
             fused_content=fused_content,
@@ -412,8 +489,9 @@ class ArenaOrchestrator:
         return sorted(TASKS_DIR.glob("*.yaml"))
 
     def save_elo(self, state: dict[str, float]) -> Path:
-        """显式保存 Elo 状态(默认路径 reports/elo_state.json)。"""
-        return save_state(state, self._elo_state_path)
+        """显式保存 Elo 状态;返回实际写入的文件路径。"""
+        path = self._elo_state_path or ELO_STATE_FILE
+        return save_state(state, path)
 
     def reset_state(self) -> None:
         """强制删除 state.json(下次 run_full_cycle 将重新跑)。"""
@@ -447,19 +525,23 @@ class ArenaOrchestrator:
     # 内部:skill / task 加载
     # ============================================================
 
-    def _load_skills(self, skill_paths: Iterable[str]) -> dict[str, str]:
+    def _load_skills(self, skill_paths: Iterable[str]) -> dict[str, SkillEntry]:
         """加载并校验所有 skill;以 stem 为 key。"""
-        skills: dict[str, str] = {}
+        skills: dict[str, SkillEntry] = {}
         for p in skill_paths:
             path = Path(p)
             if not path.is_file() or path.suffix != ".md":
                 logger.warning("run_full_cycle: 跳过无效 skill 路径 %s", p)
                 continue
-            content = load_skill(path)
-            if not content.strip():
+            try:
+                entry = load_skill_entry(path)
+            except Exception as exc:
+                logger.warning("run_full_cycle: 加载 skill %s 失败: %s", p, exc)
+                continue
+            if not entry.content.strip():
                 logger.warning("run_full_cycle: 跳过空 skill %s", p)
                 continue
-            skills[path.stem] = content
+            skills[entry.name] = entry
         if not skills:
             raise ValueError("没有任何可用的 skill(全部路径无效或文件为空)")
         return skills
@@ -484,7 +566,7 @@ class ArenaOrchestrator:
                     all_tasks.append(t)
 
         if task_source in ("auto", "hybrid"):
-            cats = auto_categories or ["writing", "coding", "analysis"]
+            cats = auto_categories if auto_categories else ["writing", "coding", "analysis"]
             auto_tasks = self._generate_auto_tasks(
                 categories=cats, per_category=auto_per_category
             )
@@ -560,8 +642,6 @@ class ArenaOrchestrator:
                 continue
             is_dup = False
             for prev in seen_prompts:
-                from .task_dedup import jaccard_similarity
-
                 if jaccard_similarity(prompt, prev) >= 0.85:
                     is_dup = True
                     break
@@ -578,11 +658,11 @@ class ArenaOrchestrator:
         self,
         *,
         state: dict[str, Any],
-        skills: dict[str, str],
+        skills: dict[str, SkillEntry],
         tasks: list[dict[str, Any]],
         rounds_per_pair: int,
     ) -> list[MatchResult]:
-        """阶段 A:对每个 task 跑每个 skill,两两配对 → judge → 更新 Elo。"""
+        """阶段 A:按领域分组竞技,每个领域内两两配对 → judge → 更新 Elo。"""
         if state["phases"].get("A", {}).get("status") == "done":
             logger.info("阶段 A 已 done,跳过(从缓存恢复 matches)")
             return self._reconstruct_matches_from_cache()
@@ -594,101 +674,174 @@ class ArenaOrchestrator:
         }
         self._save_state(state)
 
-        # 加载(或初始化)Elo
-        elo_state = self._read_elo_state()
-        for name in skills:
-            elo_state.setdefault(name, 1500.0)
-        # baseline 也是选手
-        elo_state.setdefault("baseline", 1500.0)
-
+        domain_elo: dict[str, dict[str, float]] = self._read_domain_elo_state()
         client = self._ensure_client()
-        # 缓存目录
         self._runs_cache_dir.mkdir(parents=True, exist_ok=True)
-
-        # 选手名列表(含 baseline)
-        names = list(skills.keys()) + ["baseline"]
 
         all_matches: list[MatchResult] = []
 
-        for task in tasks:
-            tid = task["id"]
-            tprompt = task["prompt"]
-            tcat = task.get("category", "unknown")
+        # 预计算总比赛数(用于前端进度条)
+        total_expected_matches = 0
+        for _d in TASK_DOMAINS:
+            _ds = {n: s for n, s in skills.items() if s.participates_in(_d)}
+            _dt = [t for t in tasks if t.get("category", "unknown") == _d]
+            if len(_ds) >= 1 and _dt:
+                _pairs = len(list(combinations(list(_ds.keys()) + [f"baseline_{_d}"], 2)))
+                total_expected_matches += len(_dt) * _pairs * rounds_per_pair
+        self._emit({
+            "type": "phase_a_plan",
+            "total_matches": total_expected_matches,
+            "rounds_per_pair": rounds_per_pair,
+        })
 
-            # 1) 跑每个 skill 拿产物(写缓存)
-            outputs: dict[str, str] = {}
-            for name in names:
-                cache_path = self._cache_path(tid, name)
-                if cache_path.exists() and cache_path.read_text(
-                    encoding="utf-8"
-                ).strip():
-                    outputs[name] = cache_path.read_text(encoding="utf-8")
-                    logger.debug("阶段 A: 命中缓存 %s", cache_path)
-                    continue
+        for domain in TASK_DOMAINS:
+            domain_skills = {
+                n: s for n, s in skills.items() if s.participates_in(domain)
+            }
+            domain_tasks = [t for t in tasks if t.get("category", "unknown") == domain]
 
-                if name == "baseline":
-                    skill_content = None
-                else:
-                    skill_content = skills[name]
-                run = run_with_skill(
-                    task=tprompt,
-                    skill_content=skill_content,
-                    client=client,
-                    skill_name=name if name != "baseline" else None,
+            if len(domain_skills) < 1 or not domain_tasks:
+                self._emit({
+                    "type": "phase_a_domain_skip",
+                    "domain": domain,
+                    "skill_count": len(domain_skills),
+                    "task_count": len(domain_tasks),
+                })
+                logger.info(
+                    "阶段 A: 领域 %s 跳过(skills=%d, tasks=%d)",
+                    domain, len(domain_skills), len(domain_tasks),
                 )
-                outputs[name] = run.content
-                cache_path.write_text(run.content, encoding="utf-8")
+                continue
 
-            # 2) 两两配对(无序)→ 跑 rounds_per_pair 轮
-            for a, b in combinations(names, 2):
-                for round_idx in range(1, rounds_per_pair + 1):
-                    match_id = f"{tid}#{a}__{b}#r{round_idx}"
-                    if self._match_already_recorded(state, match_id):
+            baseline_name = f"baseline_{domain}"
+            domain_elo.setdefault(domain, {})
+            for name in domain_skills:
+                domain_elo[domain].setdefault(name, 1500.0)
+            domain_elo[domain].setdefault(baseline_name, 1500.0)
+
+            names = list(domain_skills.keys()) + [baseline_name]
+            domain_pairs = list(combinations(names, 2))
+            domain_total_matches = len(domain_pairs) * rounds_per_pair
+
+            self._emit({
+                "type": "phase_a_domain_start",
+                "domain": domain,
+                "skill_count": len(domain_skills),
+                "task_count": len(domain_tasks),
+                "domain_total_matches": domain_total_matches,
+                "total_matches": total_expected_matches,
+            })
+
+            for task in domain_tasks:
+                tid = task["id"]
+                tprompt = task["prompt"]
+
+                outputs: dict[str, str] = {}
+                for name in names:
+                    cache_path = self._cache_path(tid, name)
+                    if cache_path.exists() and cache_path.read_text(encoding="utf-8").strip():
+                        outputs[name] = cache_path.read_text(encoding="utf-8")
+                        self._emit({
+                            "type": "phase_a_skill_exec",
+                            "domain": domain,
+                            "task_id": tid,
+                            "skill": name,
+                            "cache_hit": True,
+                        })
                         continue
-                    v: Verdict = compare(
+
+                    if name == baseline_name:
+                        skill_content = None
+                        skill_name_for_run = None
+                    else:
+                        skill_content = domain_skills[name].content
+                        skill_name_for_run = name
+
+                    self._emit({
+                        "type": "phase_a_skill_exec",
+                        "domain": domain,
+                        "task_id": tid,
+                        "skill": name,
+                        "cache_hit": False,
+                    })
+                    run = run_with_skill(
                         task=tprompt,
-                        output_a=outputs[a],
-                        output_b=outputs[b],
-                        skill_a=a,
-                        skill_b=b,
+                        skill_content=skill_content,
                         client=client,
+                        skill_name=skill_name_for_run,
                     )
-                    # Elo 更新(从 A 视角)
-                    score = v.to_score()  # 1.0 / 0.5 / 0.0
-                    r_a, r_b = elo_state.get(a, 1500.0), elo_state.get(b, 1500.0)
-                    # 直接用 update_rating 拿到新分数
-                    from .elo import update_rating
+                    outputs[name] = run.content
+                    cache_path.write_text(run.content, encoding="utf-8")
 
-                    new_a, new_b = update_rating(r_a, r_b, score)
-                    elo_state[a] = new_a
-                    elo_state[b] = new_b
+                for a, b in domain_pairs:
+                    for round_idx in range(1, rounds_per_pair + 1):
+                        match_id = f"{domain}#{tid}#{a}__{b}#r{round_idx}"
+                        if self._match_already_recorded(state, match_id):
+                            continue
+                        v: Verdict = compare(
+                            task=tprompt,
+                            output_a=outputs[a],
+                            output_b=outputs[b],
+                            skill_a=a,
+                            skill_b=b,
+                            client=client,
+                        )
+                        score = v.to_score()
+                        elo_dom = domain_elo[domain]
+                        r_a, r_b = elo_dom.get(a, 1500.0), elo_dom.get(b, 1500.0)
+                        new_a, new_b = update_rating(r_a, r_b, score)
+                        elo_dom[a] = new_a
+                        elo_dom[b] = new_b
 
-                    rec = MatchResult(
-                        match_id=match_id,
-                        timestamp=_now_iso(),
-                        task_id=tid,
-                        task_prompt=tprompt,
-                        skill_a=a,
-                        skill_b=b,
-                        verdict=v,
-                        output_a=outputs[a],
-                        output_b=outputs[b],
-                    )
-                    all_matches.append(rec)
-                    # state 累积(便于断点续跑时知道哪些 match 已跑过)
-                    state["phases"]["A"].setdefault("recorded_ids", []).append(
-                        match_id
-                    )
-                    state["phases"]["A"]["matches"] = len(all_matches)
-                    # 每场比赛都刷盘(防止大批次中断丢失进度)
-                    self._save_state(state)
-                    self._save_elo_state(elo_state)
+                        rec = MatchResult(
+                            match_id=match_id,
+                            timestamp=_now_iso(),
+                            task_id=tid,
+                            task_prompt=tprompt,
+                            skill_a=a,
+                            skill_b=b,
+                            verdict=v,
+                            output_a=outputs[a],
+                            output_b=outputs[b],
+                            domain=domain,
+                        )
+                        all_matches.append(rec)
+                        _append_match_log(rec, MATCHES_LOG)
+                        state["phases"]["A"].setdefault("recorded_ids", []).append(match_id)
+                        state["phases"]["A"]["matches"] = len(all_matches)
+                        self._save_state(state)
+
+                        self._emit({
+                            "type": "phase_a_match",
+                            "domain": domain,
+                            "match_id": match_id,
+                            "task_id": tid,
+                            "skill_a": a,
+                            "skill_b": b,
+                            "winner": v.winner,
+                            "score_a": v.total_score("A"),
+                            "score_b": v.total_score("B"),
+                            "reasoning": v.reasoning,
+                            "elo_a": new_a,
+                            "elo_b": new_b,
+                            "elo_delta_a": new_a - r_a,
+                            "elo_delta_b": new_b - r_b,
+                            "match_index": len(all_matches),
+                            "total_matches": total_expected_matches,
+                        })
+
+            self._save_domain_elo_state(domain_elo)
+            self._emit({
+                "type": "phase_a_domain_done",
+                "domain": domain,
+                "elo_snapshot": dict(domain_elo[domain]),
+            })
 
         # 收尾
         state["phases"]["A"]["status"] = "done"
         state["phases"]["A"]["finished_at"] = _now_iso()
         self._save_state(state)
-        self._save_elo_state(elo_state)
+        self._save_domain_elo_state(domain_elo)
         return all_matches
 
     def _match_already_recorded(
@@ -711,29 +864,33 @@ class ArenaOrchestrator:
         state: dict[str, Any],
         skill_a_path: str,
         skill_b_path: str,
-        skills: dict[str, str],
+        skills: dict[str, SkillEntry],
         output_name: str | None,
+        domain: str = "",
     ) -> tuple[Path, str]:
-        """阶段 B:取 Top2 → 融合 → 落盘。返回 (path, content)。"""
-        phase_b = state["phases"].setdefault("B", {})
+        """阶段 B:取某领域 Top2 → 融合 → 落盘。返回 (path, content)。"""
+        domain_prefix = f"{domain}_" if domain else ""
+        phase_key = f"B_{domain}" if domain else "B"
+        phase_b = state["phases"].setdefault(phase_key, {})
         if phase_b.get("status") == "done" and phase_b.get("output_path"):
             p = Path(phase_b["output_path"])
             if p.exists():
-                logger.info("阶段 B 已 done,跳过(读缓存 %s)", p)
+                logger.info("阶段 B(%s) 已 done,跳过(读缓存 %s)", domain, p)
                 return p, p.read_text(encoding="utf-8")
 
         phase_b["status"] = "running"
         phase_b["started_at"] = _now_iso()
-        state["phases"]["B"] = phase_b
+        state["phases"][phase_key] = phase_b
         self._save_state(state)
 
-        name_a = Path(skill_a_path).stem if "/" in skill_a_path or "\\" in skill_a_path else skill_a_path
-        name_b = Path(skill_b_path).stem if "/" in skill_b_path or "\\" in skill_b_path else skill_b_path
+        name_a = Path(skill_a_path).stem if any(c in skill_a_path for c in ("/", "\\")) else skill_a_path
+        name_b = Path(skill_b_path).stem if any(c in skill_b_path for c in ("/", "\\")) else skill_b_path
 
-        # 构造轻量 judge_feedback(基于 Elo 差)
-        elo = self._read_elo_state()
-        elo_a = elo.get(name_a, 1500.0)
-        elo_b = elo.get(name_b, 1500.0)
+        # 构造轻量 judge_feedback(基于领域 Elo 差)
+        domain_elo = self._read_domain_elo_state()
+        elo_dom = domain_elo.get(domain, {})
+        elo_a = elo_dom.get(name_a, 1500.0)
+        elo_b = elo_dom.get(name_b, 1500.0)
         judge_feedback = (
             f"当前 Elo:A({name_a})={elo_a:.1f}, B({name_b})={elo_b:.1f}。"
             f"保留 A 的强项({name_a} 在最近对战中的优势),"
@@ -742,14 +899,23 @@ class ArenaOrchestrator:
 
         client = self._ensure_client()
         self._fused_dir.mkdir(parents=True, exist_ok=True)
-        target_name = output_name or f"{name_a}__{name_b}_fused.md"
+        target_name = output_name or f"{domain_prefix}{name_a}__{name_b}_fused.md"
         target_path = self._fused_dir / target_name
+
+        self._emit({
+            "type": "phase_b_fuse_start",
+            "domain": domain,
+            "skill_a": name_a,
+            "skill_b": name_b,
+            "elo_a": elo_a,
+            "elo_b": elo_b,
+        })
 
         try:
             fused = fuse_skills(
-                skill_a_content=skills[name_a],
+                skill_a_content=skills[name_a].content,
                 skill_a_name=name_a,
-                skill_b_content=skills[name_b],
+                skill_b_content=skills[name_b].content,
                 skill_b_name=name_b,
                 task_context=(
                     "Skill 竞技场端到端流程:对 Elo 排名前二的两个 skill 做融合,"
@@ -763,6 +929,11 @@ class ArenaOrchestrator:
             phase_b["status"] = "failed"
             phase_b["error"] = repr(exc)
             self._save_state(state)
+            self._emit({
+                "type": "phase_b_fuse_failed",
+                "domain": domain,
+                "error": repr(exc),
+            })
             raise
 
         target_path.write_text(fused, encoding="utf-8")
@@ -771,6 +942,14 @@ class ArenaOrchestrator:
         phase_b["finished_at"] = _now_iso()
         state["phases"]["B"] = phase_b
         self._save_state(state)
+        self._emit({
+            "type": "phase_b_fuse_done",
+            "domain": domain,
+            "skill_a": name_a,
+            "skill_b": name_b,
+            "output_path": str(target_path),
+            "output_length": len(fused),
+        })
         return target_path, fused
 
     def _phase_improvement(
@@ -780,34 +959,72 @@ class ArenaOrchestrator:
         skill_name: str,
         skill_content: str,
         max_iterations: int,
+        domain: str = "",
     ) -> ImprovementReport:
-        """阶段 C:对 Bottom1 skill 跑自改进循环。"""
-        phase_c = state["phases"].setdefault("C", {})
+        """阶段 C:对某领域 Bottom1 skill 跑自改进循环。"""
+        phase_key = f"C_{domain}" if domain else "C"
+        phase_c = state["phases"].setdefault(phase_key, {})
         if phase_c.get("status") == "done" and phase_c.get("skill_name") == skill_name:
-            # 已为同 skill 跑过,跳过
-            logger.info("阶段 C 已 done for %s,跳过", skill_name)
-            return _ImprovementReport_cached(state, skill_name)  # type: ignore[return-value]
+            logger.info("阶段 C(%s) 已 done for %s,跳过", domain, skill_name)
+            self._emit({
+                "type": "phase_c_skip_cached",
+                "domain": domain,
+                "skill": skill_name,
+            })
+            return _ImprovementReport_cached(state, skill_name)
 
         phase_c["status"] = "running"
         phase_c["skill_name"] = skill_name
         phase_c["started_at"] = _now_iso()
-        state["phases"]["C"] = phase_c
+        state["phases"][phase_key] = phase_c
+
+        self._emit({
+            "type": "phase_c_improve_start",
+            "domain": domain,
+            "skill": skill_name,
+            "max_iterations": max_iterations,
+        })
         self._save_state(state)
 
-        # 注入真实 evaluator:跑 N 场 vs baseline,更新 Elo,收集 weaknesses
-        elo = self._read_elo_state()
+        # 注入真实 evaluator:跑 N 场 vs baseline_{domain},更新领域 Elo,收集 weaknesses
+        domain_elo = self._read_domain_elo_state()
         client = self._ensure_client()
         cache = self._runs_cache_dir
         cache.mkdir(parents=True, exist_ok=True)
+        baseline_name = f"baseline_{domain}" if domain else "baseline"
 
         def evaluator(s_content: str, s_name: str) -> tuple[float, list[str]]:
             return self._improvement_evaluator(
                 skill_content=s_content,
                 skill_name=s_name,
-                elo_state=elo,
+                domain_elo=domain_elo,
+                domain=domain,
+                baseline_name=baseline_name,
                 client=client,
                 cache_dir=cache,
             )
+
+        def _on_iteration(
+            iteration: int,
+            elo_before: float,
+            elo_after: float,
+            elo_delta: float,
+            weaknesses: tuple[str, ...],
+            iter_converged: bool,
+            total_iterations: int,
+        ) -> None:
+            self._emit({
+                "type": "phase_c_iteration",
+                "domain": domain,
+                "skill": skill_name,
+                "iteration": iteration,
+                "elo_before": elo_before,
+                "elo_after": elo_after,
+                "elo_delta": elo_delta,
+                "weaknesses_count": len(weaknesses),
+                "converged": iter_converged,
+                "total_iterations": total_iterations,
+            })
 
         report = run_improvement_cycle(
             skill_name=skill_name,
@@ -817,6 +1034,7 @@ class ArenaOrchestrator:
             evaluator=evaluator,
             model="deepseek-v4-pro",
             client=client,
+            on_iteration=_on_iteration,
         )
 
         # 落盘最终 skill 版本
@@ -832,10 +1050,18 @@ class ArenaOrchestrator:
         phase_c["total_iterations"] = report.total_iterations
         phase_c["converged"] = report.converged
         phase_c["final_elo"] = report.final_elo
-        state["phases"]["C"] = phase_c
+        state["phases"][phase_key] = phase_c
         self._save_state(state)
-        # 把改进后 Elo 写回(简化为仅保留 final_elo)
-        self._save_elo_state(elo)
+        self._save_domain_elo_state(domain_elo)
+        self._emit({
+            "type": "phase_c_improve_done",
+            "domain": domain,
+            "skill": skill_name,
+            "total_iterations": report.total_iterations,
+            "final_elo": report.final_elo,
+            "converged": report.converged,
+            "output_path": phase_c.get("output_path"),
+        })
         return report
 
     def _improvement_evaluator(
@@ -843,35 +1069,35 @@ class ArenaOrchestrator:
         *,
         skill_content: str,
         skill_name: str,
-        elo_state: dict[str, float],
+        domain_elo: dict[str, dict[str, float]],
+        domain: str,
+        baseline_name: str,
         client: DeepSeekClient,
         cache_dir: Path,
     ) -> tuple[float, list[str]]:
-        """生产 evaluator:在固定任务子集上跑 vs baseline → 更新 Elo + 收集 weaknesses。
-
-        为控制时间 / 成本:每个 skill 只挑 2 个固定任务(每类第 1 个)做对战。
-        """
+        """生产 evaluator:在领域固定任务子集上跑 vs baseline → 更新 Elo + 收集 weaknesses。"""
         weak: list[str] = []
         wins = 0
         losses = 0
         draws = 0
-        # 选 2 个固定任务
+        elo_dom = domain_elo.setdefault(domain, {})
         picked: list[dict[str, Any]] = []
         for path in sorted(TASKS_DIR.glob("*.yaml")) if TASKS_DIR.exists() else []:
             for t in _load_fixed_tasks(path):
-                picked.append(dict(t))
-                if len(picked) >= 2:
-                    break
+                if t.get("category", "unknown") == domain or not domain:
+                    picked.append(dict(t))
+                    if len(picked) >= 2:
+                        break
             if len(picked) >= 2:
                 break
         if not picked:
-            return (elo_state.get(skill_name, 1500.0), weak)
+            return (elo_dom.get(skill_name, 1500.0), weak)
 
         for task in picked:
             tid = task["id"]
             tprompt = task["prompt"]
             cp_self = cache_dir / f"{tid}__{skill_name}.txt"
-            cp_base = cache_dir / f"{tid}__baseline.txt"
+            cp_base = cache_dir / f"{tid}__{baseline_name}.txt"
             if not cp_self.exists():
                 run = run_with_skill(
                     task=tprompt,
@@ -897,22 +1123,20 @@ class ArenaOrchestrator:
                     output_a=content_self,
                     output_b=content_base,
                     skill_a=skill_name,
-                    skill_b="baseline",
+                    skill_b=baseline_name,
                     client=client,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("improvement_evaluator: compare 失败: %s", exc)
                 continue
 
-            from .elo import update_rating
-
             r_a, r_b = update_rating(
-                elo_state.get(skill_name, 1500.0),
-                elo_state.get("baseline", 1500.0),
+                elo_dom.get(skill_name, 1500.0),
+                elo_dom.get(baseline_name, 1500.0),
                 v.to_score(),
             )
-            elo_state[skill_name] = r_a
-            elo_state["baseline"] = r_b
+            elo_dom[skill_name] = r_a
+            elo_dom[baseline_name] = r_b
 
             if v.winner == "A":
                 wins += 1
@@ -930,9 +1154,7 @@ class ArenaOrchestrator:
                     if val is not None and val < 6.0:
                         weak.append(f"{dim} 偏低({val:.1f})")
 
-        # 简化版 Elo:用 wins-losses 推一个分(不引入更复杂模型,避免抖动)
-        s_elo = 1500.0 + (wins - losses) * 20 + draws * 5
-        return (s_elo, weak)
+        return (elo_dom.get(skill_name, 1500.0), weak)
 
     def _phase_report(
         self,
@@ -945,6 +1167,7 @@ class ArenaOrchestrator:
         improvement: ImprovementReport | None,
         bottom_skill: str | None,
         title: str,
+        domain_elo: dict[str, dict[str, float]] | None = None,
     ) -> Path:
         """阶段 D:生成 Markdown 总报告。"""
         ensure_reports_dir()
@@ -953,6 +1176,7 @@ class ArenaOrchestrator:
             elo_state,
             output_path=REPORTS_DIR / f"report_{_ts()}.md",
             title=title,
+            domain_elo=domain_elo,
         )
 
         # 追加"阶段 B / C 摘要"小节
@@ -1050,31 +1274,33 @@ class ArenaOrchestrator:
         path = self._elo_state_path or ELO_STATE_FILE
         save_state(dict(ratings), path)
 
+    def _read_domain_elo_state(self) -> dict[str, dict[str, float]]:
+        path = self._elo_state_path or ELO_STATE_FILE
+        return load_domain_state(path)
+
+    def _save_domain_elo_state(self, domain_elo: dict[str, dict[str, float]]) -> None:
+        path = self._elo_state_path or ELO_STATE_FILE
+        save_domain_state(domain_elo, path)
+
     # ============================================================
     # 内部:辅助
     # ============================================================
 
     def _reconstruct_matches_from_cache(self) -> list[MatchResult]:
-        """从 state.json + runs 缓存里尽量恢复 matches 列表(仅用于 regenerate_report)。
-
-        注意:Verdict 无法完全恢复(原始 JSON 不存),所以这一路径会构造一个
-        "winner=tie / 全维度 5.0" 的占位 Verdict;真正"重新生成报告"应通过
-        regenerate_report 用新版 generate_report + 缓存产物拼装。
-        """
-        # 实际中:从 phase_A.recorded_ids 出发,这里简单返回空(避免错误数据)。
-        return []
+        """从 matches.jsonl 恢复 matches 列表(用于断点续跑和 regenerate_report)。"""
+        return _read_match_log(MATCHES_LOG)
 
     @staticmethod
     def _top_k_skills(elo: Mapping[str, float], k: int) -> list[str]:
-        """返回 Elo 排名前 k 的 skill 名(排除 baseline)。"""
-        candidates = [(n, r) for n, r in elo.items() if n != "baseline"]
+        """返回 Elo 排名前 k 的 skill 名(排除 baseline_*)。"""
+        candidates = [(n, r) for n, r in elo.items() if not n.startswith("baseline")]
         candidates.sort(key=lambda x: x[1], reverse=True)
         return [n for n, _ in candidates[:k]]
 
     @staticmethod
     def _bottom_skill(elo: Mapping[str, float]) -> str | None:
-        """返回 Elo 最低的 skill 名(排除 baseline)。"""
-        candidates = [(n, r) for n, r in elo.items() if n != "baseline"]
+        """返回 Elo 最低的 skill 名(排除 baseline_*)。"""
+        candidates = [(n, r) for n, r in elo.items() if not n.startswith("baseline")]
         if not candidates:
             return None
         candidates.sort(key=lambda x: x[1])
@@ -1117,6 +1343,77 @@ def _load_fixed_tasks(path: Path) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _serialize_match(rec: MatchResult) -> dict[str, Any]:
+    """将 MatchResult 序列化为可 JSON 化的 dict。"""
+    return {
+        "match_id": rec.match_id,
+        "timestamp": rec.timestamp,
+        "task_id": rec.task_id,
+        "task_prompt": rec.task_prompt,
+        "skill_a": rec.skill_a,
+        "skill_b": rec.skill_b,
+        "verdict": {
+            "winner": rec.verdict.winner,
+            "scores": {
+                "A": rec.verdict.scores["A"].model_dump(),
+                "B": rec.verdict.scores["B"].model_dump(),
+            },
+            "reasoning": rec.verdict.reasoning,
+        },
+        "output_a": rec.output_a,
+        "output_b": rec.output_b,
+    }
+
+
+def _deserialize_match(data: dict[str, Any]) -> MatchResult:
+    """从 dict 反序列化 MatchResult。"""
+    from .judge import DimensionScores
+    v = data["verdict"]
+    return MatchResult(
+        match_id=data["match_id"],
+        timestamp=data["timestamp"],
+        task_id=data["task_id"],
+        task_prompt=data["task_prompt"],
+        skill_a=data["skill_a"],
+        skill_b=data["skill_b"],
+        verdict=Verdict(
+            winner=v["winner"],
+            scores={
+                "A": DimensionScores(**v["scores"]["A"]),
+                "B": DimensionScores(**v["scores"]["B"]),
+            },
+            reasoning=v["reasoning"],
+        ),
+        output_a=data.get("output_a", ""),
+        output_b=data.get("output_b", ""),
+    )
+
+
+def _append_match_log(rec: MatchResult, log_path: Path) -> None:
+    """追加一条 MatchResult 到 JSONL 文件。"""
+    ensure_reports_dir()
+    line = json.dumps(_sanitize_for_json(_serialize_match(rec)), ensure_ascii=False)
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def _read_match_log(log_path: Path) -> list[MatchResult]:
+    """从 JSONL 文件读取所有 MatchResult。"""
+    if not log_path.exists():
+        return []
+    results: list[MatchResult] = []
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            results.append(_deserialize_match(data))
+        except (json.JSONDecodeError, KeyError, OSError) as exc:
+            logger.warning("跳过损坏的 match 记录: %s", exc)
+    return results
 
 
 def _now_iso() -> str:

@@ -1,3 +1,7 @@
+---
+domains: [coding]
+---
+
 # Source: https://prompts.chat/prompts/cmq5b1zzi0004la04htszgti1_shadcn-component-adapter-for-cursor
 # Collected: 2026-06-12
 # Category: coding

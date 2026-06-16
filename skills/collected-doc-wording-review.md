@@ -1,3 +1,7 @@
+---
+domains: [writing]
+---
+
 # Source: https://prompts.chat/prompts/cmq5uxylm0004l504eyhlvyqa_improve-documentation-wording-and-fix-github-link
 # Collected: 2026-06-12
 # Category: writing

@@ -58,8 +58,7 @@ class _FakeDeepSeekClient:
         model: str | None = None,
         temperature: float = 0.2,
     ) -> CompletionResult:
-        # fuse 不调 judge,这里保留以匹配接口
-        raise NotImplementedError("fuse 不调用 judge")
+        return self.execute(messages, model=model, temperature=temperature)
 
     @property
     def settings(self) -> Any:  # noqa: D401
@@ -67,6 +66,7 @@ class _FakeDeepSeekClient:
 
         class _S:
             execute_model = "fake-execute"
+            judge_model = "fake-judge"
 
         return _S()
 

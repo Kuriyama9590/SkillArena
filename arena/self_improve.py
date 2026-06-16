@@ -219,6 +219,9 @@ def improve_skill(
 # 类型:evaluator 返回 (Elo, weaknesses)
 Evaluator = Callable[[str, str], tuple[float, list[str]]]
 
+# 类型:迭代回调,每轮迭代后调用,接收 (iteration, elo_before, elo_after, elo_delta, weaknesses, converged, total_iterations)
+IterationCallback = Callable[[int, float, float, float, tuple[str, ...], bool, int], None]
+
 
 def _default_evaluator(skill_content: str, skill_name: str) -> tuple[float, list[str]]:
     """默认 evaluator:无外部评估能力时返回 (1500, [])。
@@ -239,6 +242,7 @@ def run_improvement_cycle(
     evaluator: Evaluator | None = None,
     model: str = "deepseek-v4-pro",
     client: DeepSeekClient | None = None,
+    on_iteration: IterationCallback | None = None,
 ) -> ImprovementReport:
     """对单个 skill 运行自改进循环。
 
@@ -291,6 +295,11 @@ def run_improvement_cycle(
         if not weaknesses:
             notes_parts.append(f"iter={i} 无 weaknesses,提前停止")
             converged = True
+            if on_iteration is not None:
+                try:
+                    on_iteration(i, elo_before, elo_before, 0.0, tuple(weaknesses), True, len(steps))
+                except Exception:  # noqa: BLE001
+                    pass
             break
 
         # 3b. 改进
@@ -323,11 +332,23 @@ def run_improvement_cycle(
         current_skill = new_skill
         current_elo = elo_after
 
-        if elo_delta >= target_elo_delta:
+        iter_converged = elo_delta >= target_elo_delta
+        if iter_converged:
             notes_parts.append(
                 f"iter={i} Elo 提升 {elo_delta:.1f} >= {target_elo_delta},达成目标"
             )
             converged = True
+
+        if on_iteration is not None:
+            try:
+                on_iteration(
+                    i, elo_before, elo_after, elo_delta,
+                    tuple(weaknesses), iter_converged, len(steps),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        if iter_converged:
             break
 
     if not converged and not notes_parts:
@@ -397,8 +418,12 @@ def _call_model(
     return result.content
 
 
+IMPROVE_MIN_LENGTH: int = 150
+IMPROVE_MAX_LENGTH: int = 400
+
+
 def _finalize(text: str, *, skill_name: str) -> str:
-    """结构化校验 + 返回最终 skill 文本。"""
+    """结构化校验 + 长度校验 + 返回最终 skill 文本。"""
     parsed = _ImprovedOutput.parse(text)
     if not (parsed.has_core_principles and parsed.has_behavior_constraints):
         missing = [
@@ -412,7 +437,31 @@ def _finalize(text: str, *, skill_name: str) -> str:
         raise ValueError(
             f"改进产物缺少必需章节: {missing}; skill_name={skill_name!r}"
         )
-    return parsed.body
+    body = parsed.body
+    compact = re.sub(r"\s+", "", body)
+    compact_len = len(compact)
+    if compact_len < IMPROVE_MIN_LENGTH:
+        raise ValueError(
+            f"改进产物偏短(compact_len={compact_len} < IMPROVE_MIN_LENGTH={IMPROVE_MIN_LENGTH});"
+            f" skill_name={skill_name!r}"
+        )
+    if compact_len > IMPROVE_MAX_LENGTH:
+        kept = 0
+        cut = len(body)
+        for i, ch in enumerate(body):
+            if not ch.isspace():
+                kept += 1
+                if kept >= IMPROVE_MAX_LENGTH:
+                    cut = i + 1
+                    break
+        body = body[:cut].rstrip() + "\n"
+        for marker in ("## 核心原则", "## 行为约束"):
+            if marker not in body:
+                raise ValueError(
+                    f"改进产物截断后丢失必需章节 {marker!r};"
+                    f" skill_name={skill_name!r}"
+                )
+    return body
 
 
 __all__ = [
@@ -421,6 +470,7 @@ __all__ = [
     "ImprovementStep",
     "ImprovementReport",
     "Evaluator",
+    "IterationCallback",
     "improve_skill",
     "run_improvement_cycle",
 ]

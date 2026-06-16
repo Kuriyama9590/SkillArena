@@ -156,10 +156,12 @@ class _FakeDeepSeekClient:
     """全功能 mock 客户端:按 prompt 内容路由返回不同结果。
 
     路由规则:
-    - judge 调用:始终返回固定 verdict 的 JSON。
-    - execute 调用且 prompt 含 "skill 文档" / "v3" / "skill 设计专家":返回 _FUSE_OUTPUT。
-    - execute 调用且 prompt 含 "针对以上每一条 weakness" / "改进":返回 _IMPROVE_OUTPUT。
-    - 其它 execute 调用:返回通用 execute_text(用于 runner)。
+    - judge 调用 + prompt 含融合关键词 → 返回 _FUSE_OUTPUT。
+    - judge 调用 + prompt 含改进关键词 → 返回 _IMPROVE_OUTPUT。
+    - judge 调用(其它) → 返回固定 verdict 的 JSON(用于评判)。
+    - execute 调用且 prompt 含融合关键词 → 返回 _FUSE_OUTPUT。
+    - execute 调用且 prompt 含改进关键词 → 返回 _IMPROVE_OUTPUT。
+    - 其它 execute 调用 → 返回通用 execute_text(用于 runner)。
 
     这种"按消息特征分发"的 mock 让 run_full_cycle 内部所有路径(runner /
     compare / fuse / improve)都能在同一个 fake 客户端上跑通,而不必为每个
@@ -179,16 +181,9 @@ class _FakeDeepSeekClient:
         self.calls_execute: list[list[dict[str, str]]] = []
         self.calls_judge: list[list[dict[str, str]]] = []
 
-    def execute(
-        self,
-        messages: list[dict[str, str]],
-        *,
-        model: str | None = None,
-        temperature: float = 0.7,
-    ) -> CompletionResult:
-        self.execute_calls += 1
-        self.calls_execute.append(list(messages))
-        # 取最后一条 user message 来判断调用方
+    @staticmethod
+    def _classify(messages: list[dict[str, str]], model: str | None = None) -> str:
+        """根据消息内容和 model 判断调用类型: 'fuse' / 'improve' / 'other'。"""
         user_content = ""
         for m in reversed(messages):
             if m.get("role") == "user":
@@ -198,21 +193,34 @@ class _FakeDeepSeekClient:
         for m in messages:
             if m.get("role") == "system":
                 system_content += m.get("content", "")
-
-        # 路由:fuse(融合) → 返回合规 skill
         if (
             "skill 设计专家" in system_content
             or "fuse" in (model or "").lower()
             or "v3 版本的 skill" in user_content
             or "融合两个 skill 的优点" in user_content
         ):
-            content = _FUSE_OUTPUT
-        # 路由:improve(自改进) → 返回合规 skill
-        elif (
+            return "fuse"
+        if (
             "针对以上每一条 weakness" in user_content
             or "弱点列表" in user_content
             or "improve" in (model or "").lower()
         ):
+            return "improve"
+        return "other"
+
+    def execute(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+    ) -> CompletionResult:
+        self.execute_calls += 1
+        self.calls_execute.append(list(messages))
+        kind = self._classify(messages, model)
+        if kind == "fuse":
+            content = _FUSE_OUTPUT
+        elif kind == "improve":
             content = _IMPROVE_OUTPUT
         else:
             content = self.execute_text
@@ -234,8 +242,16 @@ class _FakeDeepSeekClient:
     ) -> CompletionResult:
         self.judge_calls += 1
         self.calls_judge.append(list(messages))
+        kind = self._classify(messages, model)
+        if kind == "fuse":
+            content = _FUSE_OUTPUT
+        elif kind == "improve":
+            content = _IMPROVE_OUTPUT
+        else:
+            content = _verdict_to_json(self.verdict)
+
         return CompletionResult(
-            content=_verdict_to_json(self.verdict),
+            content=content,
             prompt_tokens=10,
             completion_tokens=20,
             total_tokens=30,
@@ -251,6 +267,8 @@ class _FakeDeepSeekClient:
             base_url = "http://fake"
             timeout_seconds = 1.0
             max_retries = 1
+            enable_thinking = False
+            context_length = 128000
 
         return _S()
 
@@ -262,14 +280,14 @@ class _FakeDeepSeekClient:
 
 @pytest.fixture()
 def two_skill_files(tmp_path: Path) -> list[Path]:
-    """在 tmp_path 下创建 2 个合规 skill 文件。"""
+    """在 tmp_path 下创建 2 个合规 skill 文件(含 front matter 指定 writing 领域)。"""
     paths = []
     for name, content in [
         ("skill-a", _GOOD_SKILL),
         ("skill-b", _GOOD_SKILL_ALT),
     ]:
         p = tmp_path / f"{name}.md"
-        p.write_text(content, encoding="utf-8")
+        p.write_text(f"---\ndomains: [writing]\n---\n\n{content}", encoding="utf-8")
         paths.append(p)
     return paths
 
@@ -374,12 +392,16 @@ class TestRunFullCycleEndToEnd:
         assert isolated_paths["state"].exists()
         # matches 列表非空(阶段 A 跑了比赛)
         assert len(report.matches) > 0
-        # 阶段标记全部 done
+        # 阶段标记检查: A/D 必须 done; B/C 可能是 B_writing/C_writing 等领域化 key
+        # 旧格式的 B/C pending key 可以忽略(领域化 key 已完成)
         state_data = json.loads(
             isolated_paths["state"].read_text(encoding="utf-8")
         )
-        for ph in ("A", "B", "C", "D"):
-            assert state_data["phases"][ph]["status"] == "done", f"phase {ph} not done"
+        for ph_key, ph_data in state_data["phases"].items():
+            if ph_key in ("A", "D"):
+                assert ph_data.get("status") == "done", f"phase {ph_key} not done"
+            elif ph_key.startswith("B_") or ph_key.startswith("C_"):
+                assert ph_data.get("status") == "done", f"phase {ph_key} not done"
 
 
 # ============================================================
@@ -417,14 +439,16 @@ class TestCheckpointResume:
         isolated_paths["state"].write_text(
             json.dumps(state, ensure_ascii=False), encoding="utf-8"
         )
-        # 预置 Elo(让阶段 B/C 至少有 2 个选手)
+        # 预置 Elo(让阶段 B/C 至少有 2 个选手;分领域格式)
         isolated_paths["elo"].parent.mkdir(parents=True, exist_ok=True)
         isolated_paths["elo"].write_text(
             json.dumps(
                 {
-                    "skill-a": 1600.0,
-                    "skill-b": 1500.0,
-                    "baseline": 1500.0,
+                    "writing": {
+                        "skill-a": 1600.0,
+                        "skill-b": 1500.0,
+                        "baseline_writing": 1500.0,
+                    }
                 }
             ),
             encoding="utf-8",
@@ -521,15 +545,18 @@ class TestEloUpdatedAfterStageA:
 
         # Elo 文件存在
         assert isolated_paths["elo"].exists()
-        elo = load_state(isolated_paths["elo"])
-        # 至少有 2 个 skill(不含 baseline 也行)
-        assert "skill-a" in elo
-        assert "skill-b" in elo
-        # 至少有一个 skill 分数偏离 1500(因为 A 一直胜)
-        non_baseline = [v for k, v in elo.items() if k != "baseline"]
-        # 胜者的 Elo 一定 > 1500(或者所有都 ≤ 1500,胜者对应 < 1500 的对手;但我们 A 总胜,会有一个 > 1500)
-        assert any(v > 1500.0 for v in non_baseline), (
-            f"expected at least one Elo > 1500, got {non_baseline}"
+        from arena.elo import load_domain_state
+        domain_elo = load_domain_state(isolated_paths["elo"])
+        # 至少有一个领域有 skill-a 和 skill-b
+        all_names: set[str] = set()
+        for ratings in domain_elo.values():
+            all_names.update(ratings.keys())
+        assert "skill-a" in all_names
+        assert "skill-b" in all_names
+        # 至少有一个 skill 分数偏离 1500
+        all_ratings = [r for ratings in domain_elo.values() for n, r in ratings.items() if not n.startswith("baseline")]
+        assert any(v > 1500.0 for v in all_ratings), (
+            f"expected at least one Elo > 1500, got {all_ratings}"
         )
 
 
@@ -765,8 +792,8 @@ class TestStandaloneMethods:
         )
         assert out.exists()
         assert out.name == "standalone_fused.md"
-        # 至少调了 1 次 execute
-        assert fake.execute_calls >= 1
+        # 至少调了 1 次(execute 或 judge)
+        assert fake.execute_calls + fake.judge_calls >= 1
 
     def test_run_self_improvement_returns_report(
         self,

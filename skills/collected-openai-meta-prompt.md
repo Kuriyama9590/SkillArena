@@ -1,3 +1,7 @@
+---
+domains: [general]
+---
+
 # Source: https://cookbook.openai.com (Meta Prompt example, mirrored in Tencent Cloud writeup 2541926 & Feishu wiki THjcw677wiFqVGk2ZqLcQx7Pndf)
 # Collected: 2026-06-12
 # Category: meta

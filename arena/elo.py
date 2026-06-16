@@ -157,25 +157,79 @@ def run_round(
 # -------- 状态持久化 --------
 
 def load_state(path: Path | None = None) -> dict[str, float]:
-    """从 JSON 文件加载 Elo 状态;文件不存在时返回空 dict。"""
+    """从 JSON 文件加载 Elo 状态;文件不存在时返回空 dict。
+
+    兼容两种格式:
+    - 扁平: {"skill-a": 1560.0, ...}
+    - 分领域: {"writing": {"skill-a": 1560.0}, ...}
+
+    扁平格式直接返回;分领域格式需用 load_domain_state()。
+    """
     path = path or ELO_STATE_FILE
     if not path.exists():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        # 损坏的 JSON 不应该让系统崩溃;返回空状态由调用方决定是否报警。
-        # 但记录错误日志有助于排查。
         from logging import getLogger
 
         getLogger(__name__).warning("无法加载 Elo 状态 %s: %s", path, exc)
         return {}
     if not isinstance(data, dict):
         return {}
-    # 防御性:只保留 float-like 的键值对
+    first_vals = list(data.values())[:3]
+    if first_vals and all(isinstance(v, dict) for v in first_vals):
+        return {}
     return {
         str(k): float(v) for k, v in data.items() if isinstance(v, (int, float))
     }
+
+
+def load_domain_state(path: Path | None = None) -> dict[str, dict[str, float]]:
+    """从 JSON 文件加载分领域 Elo 状态。
+
+    返回: {"writing": {"skill-a": 1560.0, ...}, "coding": {...}, ...}
+    """
+    path = path or ELO_STATE_FILE
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        from logging import getLogger
+
+        getLogger(__name__).warning("无法加载分领域 Elo 状态 %s: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result: dict[str, dict[str, float]] = {}
+    for domain, ratings in data.items():
+        if not isinstance(ratings, dict):
+            continue
+        result[domain] = {
+            str(k): float(v) for k, v in ratings.items() if isinstance(v, (int, float))
+        }
+    return result
+
+
+def save_domain_state(
+    domain_state: dict[str, dict[str, float]], path: Path | None = None
+) -> Path:
+    """将分领域 Elo 状态写入 JSON 文件。"""
+    path = path or ELO_STATE_FILE
+    if path is ELO_STATE_FILE:
+        ensure_reports_dir()
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        domain: {name: float(rating) for name, rating in ratings.items()}
+        for domain, ratings in domain_state.items()
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    return path
 
 
 def save_state(ratings: dict[str, float], path: Path | None = None) -> Path:
@@ -224,4 +278,6 @@ __all__ = [
     "run_round",
     "load_state",
     "save_state",
+    "load_domain_state",
+    "save_domain_state",
 ]

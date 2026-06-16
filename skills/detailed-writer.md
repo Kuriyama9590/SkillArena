@@ -1,3 +1,7 @@
+---
+domains: [writing]
+---
+
 # Detailed Writer · 详细写作风格
 
 ## 核心原则

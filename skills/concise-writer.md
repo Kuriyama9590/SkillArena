@@ -1,3 +1,7 @@
+---
+domains: [writing]
+---
+
 # Concise Writer · 简洁写作风格
 
 ## 核心原则

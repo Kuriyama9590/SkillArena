@@ -1,3 +1,7 @@
+---
+domains: [writing]
+---
+
 # Source: https://prompts.chat/prompts/cmpyajmjq0004le04oe6ofv5e_conference-invitation-email
 # Collected: 2026-06-12
 # Category: writing

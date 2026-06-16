@@ -159,17 +159,7 @@ def build_judge_messages(
     Returns:
         OpenAI 兼容格式的 messages 列表,第一条是 system prompt。
     """
-    # 元信息块:在 user 消息开头明确告知模型"这是匿名的",并保留 skill 名称
-    # 仅作为审计信息(模型在认真读 prompt 时不会被诱导,但审计人员可追溯)。
-    meta_lines = []
-    if skill_a is not None:
-        meta_lines.append(f"Response A 来自 skill: {skill_a!r} (仅供审计)")
-    if skill_b is not None:
-        meta_lines.append(f"Response B 来自 skill: {skill_b!r} (仅供审计)")
-    meta_block = ("\n".join(meta_lines) + "\n") if meta_lines else ""
-
     user_prompt = (
-        f"{meta_block}"
         f"## 原始任务\n{task.strip()}\n\n"
         f"## Response A\n{output_a.strip()}\n\n"
         f"## Response B\n{output_b.strip()}\n\n"

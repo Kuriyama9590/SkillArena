@@ -274,20 +274,24 @@ def _call_model(
     *,
     model: str,
 ) -> str:
-    """调一次模型,返回 content。失败由 DeepSeekClient 内部重试,这里只兜底。"""
-    # 优先尝试 settings.execute_model(更现实可用),若未配置再退化到传入 model
-    target = model
+    """调一次模型,返回 content。融合用 judge 方法(低 temperature,更稳定)。
+    失败时回退到 settings.execute_model。"""
     try:
-        result: CompletionResult = client.execute(messages, model=target)
+        result: CompletionResult = client.judge(messages, model=model)
     except Exception as exc:  # noqa: BLE001
-        # 退而求其次:用 settings.execute_model 再试一次
         try:
-            fallback = client.settings.execute_model
-            result = client.execute(messages, model=fallback)
+            fallback = client.settings.judge_model
+            result = client.judge(messages, model=fallback)
         except Exception as exc2:  # noqa: BLE001
-            raise RuntimeError(
-                f"融合模型调用失败(指定={target}): {exc!r}; 备选={client.settings.execute_model}: {exc2!r}"
-            ) from exc2
+            try:
+                fallback2 = client.settings.execute_model
+                result = client.execute(messages, model=fallback2)
+            except Exception as exc3:  # noqa: BLE001
+                raise RuntimeError(
+                    f"融合模型调用失败(指定={model}): {exc!r}; "
+                    f"judge备选={client.settings.judge_model}: {exc2!r}; "
+                    f"execute备选={client.settings.execute_model}: {exc3!r}"
+                ) from exc3
     return result.content
 
 

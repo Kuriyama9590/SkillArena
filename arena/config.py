@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 REPORTS_DIR: Path = PROJECT_ROOT / "reports"
 SKILLS_DIR: Path = PROJECT_ROOT / "skills"
-TASKS_DIR: Path = PROJECT_ROOT / "tasks" / "fixed"
+TASKS_DIR: Path = PROJECT_ROOT / "tasks" / "fixed"  # 指向 fixed 子目录,与 TASKS_AUTO_DIR 对应
 TASKS_AUTO_DIR: Path = PROJECT_ROOT / "tasks" / "auto"
 ELO_STATE_FILE: Path = REPORTS_DIR / "elo_state.json"
 

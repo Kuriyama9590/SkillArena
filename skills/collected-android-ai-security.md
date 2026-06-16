@@ -1,3 +1,7 @@
+---
+domains: [coding]
+---
+
 # Source: https://prompts.chat/prompts/cmq0w1zq40007ld04bdk6xd13_android-ai-app-security-specialist-task
 # Collected: 2026-06-12
 # Category: coding

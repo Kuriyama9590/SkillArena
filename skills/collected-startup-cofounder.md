@@ -1,3 +1,7 @@
+---
+domains: [general]
+---
+
 # Source: https://prompts.chat/prompts/cmq9vgmm80004l204bxpgupks_act-as-a-startup-co-founder
 # Collected: 2026-06-12
 # Category: writing

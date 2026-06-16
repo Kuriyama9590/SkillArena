@@ -57,6 +57,7 @@ class _FakeDeepSeekClient:
     def settings(self) -> Any:
         class _S:
             execute_model = "fake-execute"
+            judge_model = "fake-judge"
 
         return _S()
 
@@ -75,16 +76,19 @@ _SKILL = (
 
 
 def _improved_skill(name: str = "Foo") -> str:
-    """构造一份合规的改进产物。"""
+    """构造一份合规的改进产物(覆盖 H1 + H2 + 长度 >= 150)。"""
     return (
         f"# {name}\n\n"
         "## 核心原则\n"
-        "1. 改进原则 A:针对 weakness 1。\n"
-        "2. 改进原则 B:针对 weakness 2。\n"
-        "3. 保留旧原则。\n\n"
+        "1. 改进原则 A:针对 weakness 1,直接进入主题,第一句话点明观点。\n"
+        "2. 改进原则 B:针对 weakness 2,每段一个核心想法,层次清晰,不要一锅炖。\n"
+        "3. 保留旧原则,短句优先,主动语态;能用一句话说清的不写两句话。\n"
+        "4. 关键论点配一个具体例子:数字、场景或引语,多角度展开。\n"
+        "5. 从利弊、对比、历史与未来至少给出两个维度的分析视角。\n\n"
         "## 行为约束\n"
-        "- 禁止 X。\n"
-        "- 禁止 Y。\n"
+        "- 禁止套话开头,例如在当今社会、随着时代发展。\n"
+        "- 禁止空泛例子,例如比如某些情况下,例子必须具体。\n"
+        "- 禁止重复论点,反复复述同一结论,要给出新的论据和视角。\n"
     )
 
 

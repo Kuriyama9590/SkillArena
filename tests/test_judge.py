@@ -132,16 +132,15 @@ class TestBuildJudgeMessages:
         for dim in JUDGE_DIMENSIONS:
             assert dim in system_msg, f"系统提示缺少维度: {dim}"
 
-    def test_skill_metadata_only_when_provided(self) -> None:
-        msgs_no_meta = build_judge_messages("t", "a", "b")
-        assert "仅供审计" not in msgs_no_meta[1]["content"]
-
-        msgs_with_meta = build_judge_messages(
+    def test_skill_metadata_not_leaked_to_model(self) -> None:
+        """skill 名称不应出现在发给评判模型的 messages 中(匿名性保证)。"""
+        msgs = build_judge_messages(
             "t", "a", "b", skill_a="concise-writer", skill_b="detailed-writer"
         )
-        assert "concise-writer" in msgs_with_meta[1]["content"]
-        assert "detailed-writer" in msgs_with_meta[1]["content"]
-        assert "仅供审计" in msgs_with_meta[1]["content"]
+        user_content = msgs[1]["content"]
+        assert "concise-writer" not in user_content
+        assert "detailed-writer" not in user_content
+        assert "仅供审计" not in user_content
 
 
 # -------- _extract_json --------

@@ -1,3 +1,7 @@
+---
+domains: [analysis]
+---
+
 # Source: https://prompts.chat/prompts/cmq0taqr80001lc04mev4umin_idea-validation-and-scoring-market-research-prompt
 # Collected: 2026-06-12
 # Category: analysis

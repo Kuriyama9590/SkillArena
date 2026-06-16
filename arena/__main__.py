@@ -69,18 +69,83 @@ def _cmd_fuse(args: argparse.Namespace) -> int:
 
 
 def _cmd_improve(args: argparse.Namespace) -> int:
-    orch = ArenaOrchestrator()
+    from .config import TASKS_DIR
+    from .deepseek_client import DeepSeekClient
+    from .elo import update_rating
+    from .judge import compare
+    from .runner import run_with_skill
+    from .orchestrator import MATCHES_LOG
 
-    # 注入 evaluator:跑固定任务子集 vs baseline
-    def evaluator(skill_content: str, skill_name: str) -> tuple[float, list[str]]:
-        # 占位:CLI 场景使用默认占位(返回 1500, []);生产应调 orchestrator 内部逻辑
-        return (1500.0, [])
+    client = DeepSeekClient()
 
+    def real_evaluator(skill_content: str, skill_name: str) -> tuple[float, list[str]]:
+        weak: list[str] = []
+        wins, losses, draws = 0, 0, 0
+        picked: list[dict] = []
+        from .orchestrator import _load_fixed_tasks
+        for path in sorted(TASKS_DIR.glob("*.yaml")) if TASKS_DIR.exists() else []:
+            for t in _load_fixed_tasks(path):
+                picked.append(dict(t))
+                if len(picked) >= 2:
+                    break
+            if len(picked) >= 2:
+                break
+        if not picked:
+            return (1500.0, weak)
+        from .elo import load_state as load_elo, save_state as save_elo
+        from .config import ELO_STATE_FILE
+        elo_state = load_elo(ELO_STATE_FILE)
+        for task in picked:
+            tprompt = task["prompt"]
+            run_self = run_with_skill(
+                task=tprompt, skill_content=skill_content,
+                client=client, skill_name=skill_name,
+            )
+            run_base = run_with_skill(
+                task=tprompt, skill_content=None,
+                client=client, skill_name=None,
+            )
+            try:
+                v = compare(
+                    task=tprompt,
+                    output_a=run_self.content,
+                    output_b=run_base.content,
+                    skill_a=skill_name,
+                    skill_b="baseline",
+                    client=client,
+                )
+            except Exception as exc:
+                logger.warning("improve evaluator: compare 失败: %s", exc)
+                continue
+            r_a, r_b = update_rating(
+                elo_state.get(skill_name, 1500.0),
+                elo_state.get("baseline", 1500.0),
+                v.to_score(),
+            )
+            elo_state[skill_name] = r_a
+            elo_state["baseline"] = r_b
+            if v.winner == "A":
+                wins += 1
+            elif v.winner == "B":
+                losses += 1
+            else:
+                draws += 1
+            weak.append(v.reasoning)
+            scores_a = v.scores.get("A")
+            if scores_a is not None:
+                for dim in ("correctness", "completeness", "clarity", "creativity"):
+                    val = getattr(scores_a, dim, None)
+                    if val is not None and val < 6.0:
+                        weak.append(f"{dim} 偏低({val:.1f})")
+        save_elo(elo_state, ELO_STATE_FILE)
+        return (elo_state.get(skill_name, 1500.0), weak)
+
+    orch = ArenaOrchestrator(client=client)
     report = orch.run_self_improvement(
         skill_path=args.skill,
         max_iterations=args.max_iter,
         target_elo_delta=args.target_elo_delta,
-        evaluator=evaluator if args.use_evaluator else None,
+        evaluator=real_evaluator if args.use_evaluator else None,
     )
     print(
         f"[improve] skill={report.skill_name} "

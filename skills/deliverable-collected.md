@@ -1,3 +1,7 @@
+---
+domains: [general]
+---
+
 # Track 2 — Web Collection Summary
 
 ## 任务
