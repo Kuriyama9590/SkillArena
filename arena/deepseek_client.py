@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
@@ -80,6 +81,32 @@ class DeepSeekClient:
         """
         return self._chat(
             messages=messages,
+            model=model or self._settings.execute_model,
+            temperature=temperature,
+        )
+
+    def execute_stream(
+        self,
+        messages: Sequence[dict[str, str]],
+        on_chunk: Callable[[str], None],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+    ) -> CompletionResult:
+        """流式调用"执行"模型生成产物。
+
+        每收到一个 token chunk 就调用 on_chunk(text) 回调。
+        最终返回完整的 CompletionResult(与 execute 返回格式一致)。
+
+        Args:
+            messages: OpenAI 格式的对话列表。
+            on_chunk: 每个 chunk 的回调,接收该 chunk 的文本片段。
+            model: 可选模型覆盖。
+            temperature: 采样温度。
+        """
+        return self._chat_stream(
+            messages=messages,
+            on_chunk=on_chunk,
             model=model or self._settings.execute_model,
             temperature=temperature,
         )
@@ -174,6 +201,82 @@ class DeepSeekClient:
         raise RuntimeError(
             f"DeepSeek 调用失败(模型={model},重试 {self._settings.max_retries} 次后放弃):"
             f" {last_exc!r}"
+        ) from last_exc
+
+    def _chat_stream(
+        self,
+        *,
+        messages: Sequence[dict[str, str]],
+        on_chunk: Callable[[str], None],
+        model: str,
+        temperature: float,
+    ) -> CompletionResult:
+        """流式 chat 调用:每个 token chunk 通过 on_chunk 回调投递。"""
+        last_exc: Exception | None = None
+
+        request_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": list(messages),
+            "temperature": temperature,
+            "timeout": self._settings.timeout_seconds,
+            "stream": True,
+        }
+        if self._settings.enable_thinking:
+            request_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+            request_kwargs["max_tokens"] = min(32768, self._settings.context_length // 2)
+
+        for attempt in range(self._settings.max_retries):
+            try:
+                response = self._client.chat.completions.create(**request_kwargs)
+                full_content = ""
+                prompt_tokens = 0
+                completion_tokens = 0
+
+                for chunk in response:
+                    if not chunk.choices:
+                        # usage 信息通常在最后一个 chunk
+                        usage = getattr(chunk, "usage", None)
+                        if usage:
+                            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+                            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+                        continue
+                    delta = chunk.choices[0].delta
+                    token_text = getattr(delta, "content", None) or ""
+                    if token_text:
+                        full_content += token_text
+                        try:
+                            on_chunk(token_text)
+                        except Exception:
+                            pass  # 回调失败不阻塞流式
+
+                total = prompt_tokens + completion_tokens
+                return CompletionResult(
+                    content=full_content.strip(),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total,
+                    model=model,
+                )
+
+            except APITimeoutError as exc:
+                last_exc = exc
+                logger.warning("DeepSeek stream timeout (attempt %d/%d): %s", attempt + 1, self._settings.max_retries, exc)
+            except RateLimitError as exc:
+                last_exc = exc
+                logger.warning("DeepSeek stream rate limit (attempt %d/%d): %s", attempt + 1, self._settings.max_retries, exc)
+            except APIError as exc:
+                last_exc = exc
+                logger.warning("DeepSeek stream API error (attempt %d/%d): %s", attempt + 1, self._settings.max_retries, exc)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                logger.warning("DeepSeek stream unexpected error (attempt %d/%d): %s", attempt + 1, self._settings.max_retries, exc)
+
+            if attempt < self._settings.max_retries - 1:
+                self._sleep_backoff(attempt)
+
+        assert last_exc is not None
+        raise RuntimeError(
+            f"DeepSeek 流式调用失败(模型={model},重试 {self._settings.max_retries} 次后放弃): {last_exc!r}"
         ) from last_exc
 
     def _sleep_backoff(self, attempt: int) -> None:

@@ -122,6 +122,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name, content }),
     }),
+  updateSkill: (name: string, content: string) =>
+    fetchAPI<{ name: string; updated: boolean }>(`/api/skills/${name}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    }),
+  deleteSkill: (name: string) =>
+    fetchAPI<{ name: string; deleted: boolean }>(`/api/skills/${name}`, {
+      method: 'DELETE',
+    }),
   elo: () => fetchAPI<EloData>('/api/elo'),
   eloDomain: (domain: string) =>
     fetchAPI<{ domain: string; leaderboard: [string, number][] }>(`/api/elo/${domain}`),

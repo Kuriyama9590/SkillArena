@@ -680,12 +680,15 @@ class ArenaOrchestrator:
 
         all_matches: list[MatchResult] = []
 
+        # 是否存在专用(非 general)skill —— 决定 domain 锚定规则
+        has_specialized = any("general" not in s.domains for s in skills.values())
+
         # 预计算总比赛数(用于前端进度条)
         total_expected_matches = 0
         for _d in TASK_DOMAINS:
             _ds = {n: s for n, s in skills.items() if s.participates_in(_d)}
             _dt = [t for t in tasks if t.get("category", "unknown") == _d]
-            if len(_ds) >= 1 and _dt:
+            if _dt and len(_ds) >= 1 and self._domain_is_active(_ds, has_specialized):
                 _pairs = len(list(combinations(list(_ds.keys()) + [f"baseline_{_d}"], 2)))
                 total_expected_matches += len(_dt) * _pairs * rounds_per_pair
         self._emit({
@@ -706,10 +709,27 @@ class ArenaOrchestrator:
                     "domain": domain,
                     "skill_count": len(domain_skills),
                     "task_count": len(domain_tasks),
+                    "reason": "无任务或无参与 skill",
                 })
                 logger.info(
                     "阶段 A: 领域 %s 跳过(skills=%d, tasks=%d)",
                     domain, len(domain_skills), len(domain_tasks),
+                )
+                continue
+
+            # 锚定隔离:存在专用 skill 时,该 domain 必须有专用 skill 参与;
+            # general skill 不能独自开启一个 domain(避免跨域泄漏)
+            if not self._domain_is_active(domain_skills, has_specialized):
+                self._emit({
+                    "type": "phase_a_domain_skip",
+                    "domain": domain,
+                    "skill_count": len(domain_skills),
+                    "task_count": len(domain_tasks),
+                    "reason": "无专用 skill 锚定(仅 general),跳过以隔离 domain",
+                })
+                logger.info(
+                    "阶段 A: 领域 %s 跳过(仅 general 参与,无专用 skill 锚定)",
+                    domain,
                 )
                 continue
 
@@ -764,12 +784,56 @@ class ArenaOrchestrator:
                         "skill": name,
                         "cache_hit": False,
                     })
-                    run = run_with_skill(
-                        task=tprompt,
-                        skill_content=skill_content,
-                        client=client,
-                        skill_name=skill_name_for_run,
-                    )
+
+                    # 流式执行:优先使用 execute_stream 实现实时输出推送
+                    if hasattr(client, "execute_stream"):
+                        _buf: list[str] = [""]  # mutable container for closure
+
+                        def _on_chunk(text: str, _tid=tid, _name=name, _domain=domain) -> None:
+                            _buf[0] += text
+                            self._emit({
+                                "type": "skill_output_chunk",
+                                "domain": _domain,
+                                "task_id": _tid,
+                                "skill": _name,
+                                "text": text,
+                                "accumulated": _buf[0],
+                            })
+
+                        self._emit({
+                            "type": "skill_output_start",
+                            "domain": domain,
+                            "task_id": tid,
+                            "skill": name,
+                        })
+                        messages: list[dict[str, str]] = []
+                        if skill_content is not None and skill_content.strip():
+                            messages.append({"role": "system", "content": skill_content})
+                        messages.append({"role": "user", "content": tprompt})
+                        result = client.execute_stream(messages, on_chunk=_on_chunk)
+                        run_content = result.content
+                        self._emit({
+                            "type": "skill_output_done",
+                            "domain": domain,
+                            "task_id": tid,
+                            "skill": name,
+                            "output": run_content,
+                            "tokens": result.total_tokens,
+                        })
+                        run = RunOutput(
+                            skill_name=skill_name_for_run,
+                            task=tprompt,
+                            content=run_content,
+                            tokens=result.total_tokens,
+                            model=result.model,
+                        )
+                    else:
+                        run = run_with_skill(
+                            task=tprompt,
+                            skill_content=skill_content,
+                            client=client,
+                            skill_name=skill_name_for_run,
+                        )
                     outputs[name] = run.content
                     cache_path.write_text(run.content, encoding="utf-8")
 
@@ -1291,6 +1355,22 @@ class ArenaOrchestrator:
         return _read_match_log(MATCHES_LOG)
 
     @staticmethod
+    def _domain_is_active(
+        domain_skills: dict[str, SkillEntry],
+        has_specialized: bool,
+    ) -> bool:
+        """domain 是否应激活(锚定规则)。
+
+        - 全部选中 skill 都是 general(has_specialized=False) → 所有 domain 激活,
+          general skill 可参与所有评测。
+        - 否则(存在专用 skill)→ 该 domain 必须有至少一个专用(非 general)skill 参与,
+          general skill 不能独自开启一个 domain,避免跨域泄漏。
+        """
+        if not has_specialized:
+            return True
+        return any("general" not in s.domains for s in domain_skills.values())
+
+    @staticmethod
     def _top_k_skills(elo: Mapping[str, float], k: int) -> list[str]:
         """返回 Elo 排名前 k 的 skill 名(排除 baseline_*)。"""
         candidates = [(n, r) for n, r in elo.items() if not n.startswith("baseline")]
@@ -1364,6 +1444,7 @@ def _serialize_match(rec: MatchResult) -> dict[str, Any]:
         },
         "output_a": rec.output_a,
         "output_b": rec.output_b,
+        "domain": rec.domain,
     }
 
 
@@ -1388,6 +1469,7 @@ def _deserialize_match(data: dict[str, Any]) -> MatchResult:
         ),
         output_a=data.get("output_a", ""),
         output_b=data.get("output_b", ""),
+        domain=data.get("domain", ""),
     )
 
 

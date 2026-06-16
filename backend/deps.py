@@ -89,9 +89,10 @@ def list_skill_files() -> list[dict[str, Any]]:
                     "name": p.stem,
                     "filename": p.name,
                     "path": str(p),
-                    "domains": ["general"],
+                    "domains": [],
                     "content_length": 0,
                     "preview": "",
+                    "error": "未声明 domains 且无法自动推断",
                 }
             )
     return result

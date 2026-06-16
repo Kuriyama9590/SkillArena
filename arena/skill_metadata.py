@@ -1,13 +1,14 @@
 """Skill 领域标签解析与推断。
 
 从 .md 文件读取 YAML front matter 中的 `domains` 字段,
-若无 front matter 则从文件名和内容自动推断,最终兜底为 ["general"]。
+若无 front matter 则从文件名和内容自动推断。
+无法确定领域时抛出 ValueError——不允许静默回退到 general。
 
 领域标签与 Task.category 对齐:
 - writing  → 参与 writing 类 task
 - coding   → 参与 coding 类 task
 - analysis → 参与 analysis 类 task
-- general  → 参与所有 task
+- general  → 参与所有 task（必须显式声明）
 """
 from __future__ import annotations
 
@@ -79,7 +80,7 @@ def parse_skill_domains(skill_path: Path) -> list[str]:
     1. YAML front matter 中的 `domains` 字段
     2. 从文件名推断
     3. 从内容推断
-    4. 兜底 ["general"]
+    4. 均未命中则抛出 ValueError（不允许静默回退到 general）
     """
     content = skill_path.read_text(encoding="utf-8")
 
@@ -95,8 +96,11 @@ def parse_skill_domains(skill_path: Path) -> list[str]:
     if domains:
         return _validate_domains(domains)
 
-    logger.debug("parse_skill_domains: %s 无法推断领域,默认 general", skill_path.name)
-    return ["general"]
+    raise ValueError(
+        f"skill {skill_path.name!r} 未声明 domains 且无法自动推断。"
+        f"请在 YAML front matter 中显式声明 domains 字段，"
+        f"例如: domains: [writing] 或 domains: [general]"
+    )
 
 
 def _parse_front_matter(content: str) -> list[str] | None:
@@ -149,7 +153,10 @@ def _validate_domains(domains: list[str]) -> list[str]:
     """校验并过滤无效领域标签。"""
     valid = [d for d in domains if d in VALID_DOMAINS]
     if not valid:
-        return ["general"]
+        raise ValueError(
+            f"domains 声明 {domains!r} 中无有效标签。"
+            f"允许的值: {VALID_DOMAINS}"
+        )
     if "general" in valid and len(valid) > 1:
         valid = ["general"]
     return valid

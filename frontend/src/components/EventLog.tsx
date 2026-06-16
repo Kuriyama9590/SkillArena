@@ -21,6 +21,9 @@ const TYPE_COLOR: Record<string, string> = {
   phase_b_fuse_done: 'text-amber-400',
   phase_c_iteration: 'text-red-400',
   phase_c_improve_done: 'text-red-400',
+  skill_output_start: 'text-blue-400',
+  skill_output_chunk: 'text-blue-300',
+  skill_output_done: 'text-blue-500',
 };
 
 function colorForType(t: string): string {
@@ -103,6 +106,15 @@ function formatEvent(evt: SSEEvent): string {
     case 'run_end':
       fields.push(`RUN ${evt.run_id} end`);
       break;
+    case 'skill_output_start':
+      fields.push(`OUTPUT START ${evt.skill} on ${evt.task_id}`);
+      break;
+    case 'skill_output_chunk':
+      // skip chunk events in log — too noisy; the viewer component handles display
+      return '';
+    case 'skill_output_done':
+      fields.push(`OUTPUT DONE ${evt.skill} on ${evt.task_id} (${evt.tokens ?? '?'} tok)`);
+      break;
     default:
       fields.push(JSON.stringify(evt));
   }
@@ -123,11 +135,14 @@ export default function EventLog({ events, maxLines = 200 }: Props) {
     }
   }, [events]);
 
+  // Filter out events with no display text (e.g. chunk events)
+  const displayEvents = visible.filter((evt) => formatEvent(evt) !== '');
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-gray-900 font-semibold text-sm">
-          事件日志 <span className="text-gray-400 text-xs font-normal">({visible.length})</span>
+          事件日志 <span className="text-gray-400 text-xs font-normal">({displayEvents.length})</span>
         </h2>
         <div className="flex gap-3 text-[10px]">
           <span className="text-gray-400">● INFO</span>
@@ -139,10 +154,10 @@ export default function EventLog({ events, maxLines = 200 }: Props) {
         ref={ref}
         className="bg-gray-900 rounded-lg p-3 h-48 overflow-auto text-xs leading-relaxed"
       >
-        {visible.length === 0 ? (
+        {displayEvents.length === 0 ? (
           <div className="text-gray-500">等待事件中...</div>
         ) : (
-          visible.map((evt, i) => {
+          displayEvents.map((evt, i) => {
             const ts = (evt.ts as string) || '';
             const time = ts.includes('T') ? ts.split('T')[1]?.slice(0, 8) : '';
             return (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, type SkillInfo } from '../api';
 import { useArenaStatus } from '../hooks/useArenaStatus';
 import { Play, RotateCcw, Radio, Loader2, History, X } from 'lucide-react';
@@ -6,6 +6,7 @@ import PhaseTimeline from '../components/PhaseTimeline';
 import BattleArena from '../components/BattleArena';
 import EloLeaderboard from '../components/EloLeaderboard';
 import EventLog from '../components/EventLog';
+import SkillOutputViewer from '../components/SkillOutputViewer';
 
 interface RunSummary {
   filename: string;
@@ -13,6 +14,12 @@ interface RunSummary {
   size: number;
   modified: number;
 }
+
+// 专用领域(writing/coding/analysis)——这些领域之间互斥,不能同选
+const SPECIFIC_DOMAINS = new Set(['writing', 'coding', 'analysis']);
+
+const specificDomainsOf = (domains: string[]): string[] =>
+  domains.filter((d) => SPECIFIC_DOMAINS.has(d));
 
 export default function Arena() {
   const {
@@ -23,6 +30,7 @@ export default function Arena() {
     replayRunId,
     liveBattle,
     latestResult,
+    skillOutputs,
     loadReplay,
     clearReplay,
   } = useArenaStatus();
@@ -45,13 +53,56 @@ export default function Arena() {
     api.skills().then(setAllSkills).catch(() => {});
   }, []);
 
-  const toggleSkill = (name: string) => {
-    setSkills((prev) =>
-      prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name],
-    );
+  // 已选技能中的专用领域集合:用于跨域互斥约束
+  // 规则:专用领域(writing/coding/analysis)之间不能同选,通用(general)除外
+  const selectedSpecificDomains = useMemo(() => {
+    const set = new Set<string>();
+    for (const name of skills) {
+      const info = allSkills.find((s) => s.name === name);
+      if (!info) continue;
+      for (const d of specificDomainsOf(info.domains ?? [])) set.add(d);
+    }
+    return set;
+  }, [skills, allSkills]);
+
+  // 锁定的领域:恰好选中一个专用领域时锁定它,其余专用领域禁选
+  const lockedDomain =
+    selectedSpecificDomains.size === 1 ? [...selectedSpecificDomains][0] : null;
+  const hasDomainConflict = selectedSpecificDomains.size > 1;
+
+  // 自动类目受锁定领域约束:选了专用技能后,auto 生成任务的类目强制为该领域
+  const effectiveAutoCategories = lockedDomain ? [lockedDomain] : autoCategories;
+
+  // 某 skill 是否可在当前锁定状态下被勾选
+  const isSkillSelectable = (s: SkillInfo): boolean => {
+    const domains = s.domains ?? [];
+    if (domains.length === 0) return false; // 无领域标签(加载失败)
+    if (!lockedDomain) return true; // 未锁定专用领域,均可选
+    const specifics = specificDomainsOf(domains);
+    return specifics.length === 0 || specifics.includes(lockedDomain); // 通用技能或同领域
   };
 
-  const selectAllSkills = () => setSkills(allSkills.map((s) => s.name));
+  const toggleSkill = (name: string) => {
+    const skill = allSkills.find((s) => s.name === name);
+    if (!skill) return;
+    setSkills((prev) => {
+      if (prev.includes(name)) return prev.filter((s) => s !== name);
+      if (!isSkillSelectable(skill)) return prev; // 跨域,阻止勾选
+      return [...prev, name];
+    });
+  };
+
+  const selectAllSkills = () => {
+    if (lockedDomain) {
+      // 已锁定:只选同领域 + 通用技能
+      setSkills(allSkills.filter(isSkillSelectable).map((s) => s.name));
+    } else {
+      // 未锁定:全选仅选通用技能,避免触发跨域冲突
+      setSkills(
+        allSkills.filter((s) => (s.domains ?? []).includes('general')).map((s) => s.name),
+      );
+    }
+  };
   const deselectAllSkills = () => setSkills([]);
 
   const toggleCategory = (cat: string) => {
@@ -71,7 +122,7 @@ export default function Arena() {
         max_improve_iterations: maxIterations,
         run_fusion: runFusion,
         run_improvement: runImprovement,
-        auto_categories: taskSource !== 'fixed' ? autoCategories : undefined,
+        auto_categories: taskSource !== 'fixed' ? effectiveAutoCategories : undefined,
         auto_per_category: taskSource !== 'fixed' ? autoPerCategory : 3,
       });
       setTimeout(() => api.arenaRuns().then(setRuns).catch(() => {}), 1000);
@@ -184,6 +235,11 @@ export default function Arena() {
         <EloLeaderboard eloSnapshot={eloSnapshot} />
       </div>
 
+      {/* Streaming Skill Output */}
+      {skillOutputs.size > 0 && (
+        <SkillOutputViewer outputs={skillOutputs} />
+      )}
+
       {/* Controls + Event Log */}
       <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
         {/* Controls */}
@@ -203,7 +259,7 @@ export default function Arena() {
                   disabled={isReplaying}
                   className="text-[10px] text-blue-600 hover:text-blue-800 disabled:opacity-30"
                 >
-                  全选
+                  {lockedDomain ? `全选(${lockedDomain})` : '全选通用'}
                 </button>
                 <span className="text-[10px] text-gray-300">|</span>
                 <button
@@ -221,20 +277,34 @@ export default function Arena() {
                 <div className="text-xs text-gray-400">加载中...</div>
               )}
               {allSkills.map((s) => {
-                const isGeneric = s.domains?.includes('general') ?? s.domains?.length === 0;
-                const domainLabels = isGeneric ? ['通用'] : (s.domains ?? []);
+                const domains = s.domains ?? [];
+                const noDomain = domains.length === 0; // 加载失败/无标签
+                const isGeneric = domains.includes('general');
+                const specifics = specificDomainsOf(domains);
+                const domainLabels = isGeneric ? ['通用'] : specifics;
+                const selectable = !noDomain && isSkillSelectable(s);
+                const blocked = isReplaying || !selectable;
+                const lockedOut =
+                  !noDomain && !selectable && lockedDomain !== null;
                 return (
                   <label
                     key={s.name}
-                    className={`flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1.5 py-1 rounded ${
-                      skills.includes(s.name) ? 'bg-blue-50/50' : ''
-                    }`}
+                    title={
+                      noDomain
+                        ? '该技能无领域标签,无法参与竞技'
+                        : lockedOut
+                          ? `已锁定领域 ${lockedDomain},该技能(${specifics.join('/')})不可选`
+                          : undefined
+                    }
+                    className={`flex items-center gap-2 text-xs px-1.5 py-1 rounded ${
+                      blocked ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-gray-50'
+                    } ${skills.includes(s.name) ? 'bg-blue-50/50' : ''}`}
                   >
                     <input
                       type="checkbox"
                       checked={skills.includes(s.name)}
                       onChange={() => toggleSkill(s.name)}
-                      disabled={isReplaying}
+                      disabled={blocked}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
                     />
                     <span className="text-gray-700 truncate flex-1">{s.name}</span>
@@ -262,6 +332,19 @@ export default function Arena() {
                 );
               })}
             </div>
+            {(lockedDomain || hasDomainConflict) && (
+              <div
+                className={`text-[10px] px-2 py-1 rounded ${
+                  hasDomainConflict
+                    ? 'text-red-600 bg-red-50 border border-red-200'
+                    : 'text-amber-600 bg-amber-50 border border-amber-200'
+                }`}
+              >
+                {hasDomainConflict
+                  ? '⚠ 已选择多个领域,无法同时竞技(通用技能除外)。请取消其他领域的选择。'
+                  : `已锁定领域:${lockedDomain} — 仅可选择该领域与通用技能`}
+              </div>
+            )}
           </div>
 
           {/* Task Source */}
@@ -312,19 +395,32 @@ export default function Arena() {
             <>
               <div>
                 <label className="text-xs text-gray-500 block mb-1">自动类目</label>
+                {lockedDomain && (
+                  <div className="text-[10px] text-amber-600 mb-1">
+                    类目已由所选技能锁定:{lockedDomain}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-1.5">
-                  {['writing', 'coding', 'analysis'].map((cat) => (
-                    <label key={cat} className="flex items-center gap-1 text-xs cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={autoCategories.includes(cat)}
-                        onChange={() => toggleCategory(cat)}
-                        disabled={isReplaying}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="text-gray-600">{cat}</span>
-                    </label>
-                  ))}
+                  {['writing', 'coding', 'analysis'].map((cat) => {
+                    const catLocked = lockedDomain !== null;
+                    return (
+                      <label
+                        key={cat}
+                        className={`flex items-center gap-1 text-xs ${catLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={effectiveAutoCategories.includes(cat)}
+                          onChange={() => toggleCategory(cat)}
+                          disabled={isReplaying || catLocked}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className={catLocked && cat !== lockedDomain ? 'text-gray-400' : 'text-gray-600'}>
+                          {cat}
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
               <div>
@@ -370,11 +466,11 @@ export default function Arena() {
           <div className="space-y-2 pt-2">
             <button
               onClick={handleRun}
-              disabled={running || status.running || isReplaying}
+              disabled={running || status.running || isReplaying || hasDomainConflict}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              ▶ 完整运行 A→D
+              ▶ 运行 {`A${runFusion ? '→B' : ''}${runImprovement ? '→C' : ''}→D`}
             </button>
             <button
               onClick={handleReset}

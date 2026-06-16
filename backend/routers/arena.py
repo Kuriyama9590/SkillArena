@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from arena.config import REPORTS_DIR
 from arena.orchestrator import ArenaOrchestrator, ORCHESTRATOR_STATE_FILE
+from arena.skill_metadata import TASK_DOMAINS, parse_skill_domains
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/arena", tags=["arena"])
@@ -62,6 +63,32 @@ def _all_skill_paths() -> list[str]:
     if not SKILLS_DIR.exists():
         return []
     return [str(p) for p in sorted(SKILLS_DIR.glob("*.md"))]
+
+
+def _validate_skill_domains(skill_paths: list[str]) -> None:
+    """跨域防护:专用领域(writing/coding/analysis)之间互斥,通用(general)除外。
+
+    若选中技能横跨多个专用领域,抛 400 拒绝;无领域标签的技能也拒绝。
+    """
+    specific_domains: set[str] = set()
+    for p in skill_paths:
+        path = Path(p)
+        try:
+            domains = parse_skill_domains(path)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=400,
+                detail=f"技能 {path.name} 无有效领域标签: {exc}",
+            )
+        specific_domains |= {d for d in domains if d in TASK_DOMAINS}
+    if len(specific_domains) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"不能同时选择不同领域的技能(通用除外): "
+                f"{sorted(specific_domains)}。请只保留一个领域。"
+            ),
+        )
 
 
 def _now_iso() -> str:
@@ -192,6 +219,62 @@ def _update_status_from_event(event: dict[str, Any]) -> None:
             _active_status["error"] = event.get("error")
 
 
+def _reconstruct_status_from_disk() -> None:
+    """后端启动时从持久化数据恢复 _active_status(进程重启后状态保留)。
+
+    最近一次运行的事件文件( reports/events/run_*.jsonl )回放重建
+    phase / match 计数 / latest_result / current_battle / elo 快照;
+    running 强制置 false(重启时 executor 线程已不存在,进行中的 run 视为中断)。
+    elo 再用 elo_state.json 覆盖,确保是权威值。
+    """
+    _active_status.update({
+        "running": False,
+        "phase": None,
+        "domain": None,
+        "match_index": 0,
+        "total_matches": 0,
+        "latest_result": None,
+        "current_battle": None,
+        "elo_snapshot": {},
+        "current_run_file": None,
+    })
+    runs = sorted(
+        (p for p in EVENTS_DIR.glob("run_*.jsonl") if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if runs:
+        latest = runs[0]
+        _active_status["current_run_file"] = latest.name
+        try:
+            for line in latest.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                _update_status_from_event(evt)
+        except OSError as exc:  # noqa: BLE001
+            logger.warning("回放最近运行事件失败: %s", exc)
+
+    # elo 用持久化的 elo_state.json 覆盖(权威源,跨多场 run 也准确)
+    try:
+        from arena.elo import load_domain_state
+        for ratings in load_domain_state().values():
+            _active_status["elo_snapshot"].update(ratings)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 重启后无活跃 executor → 强制非运行态
+    _active_status["running"] = False
+
+
+# 模块加载时恢复状态:进程重启后 /status 仍能返回上次运行快照
+_reconstruct_status_from_disk()
+
+
 @router.get("/status")
 def arena_status():
     """返回当前运行状态。"""
@@ -269,6 +352,9 @@ async def arena_run(req: RunRequest):
     skill_paths = req.skills or _all_skill_paths()
     if not skill_paths:
         raise HTTPException(status_code=400, detail="没有可用 skills")
+
+    # 跨域防护:专用领域之间互斥(通用除外)
+    _validate_skill_domains(skill_paths)
 
     # 开启新 run,创建事件文件
     _current_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
