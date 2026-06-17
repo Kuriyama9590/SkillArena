@@ -28,6 +28,8 @@ reports/improved/
 reports/report_*.md
 reports/events/
 reports/_pytest_*.log
+reports/matches.jsonl
+reports/elo_state_minimal.json
 
 # 运行时生成的任务(LLM 动态生成,可复现)
 tasks/auto/
@@ -39,3 +41,6 @@ import_skills/*
 # Editor / tooling
 .opencode/
 .claude/
+.codegraph/
+.kunsdd/
+.mavis/
