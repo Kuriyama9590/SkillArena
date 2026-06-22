@@ -849,14 +849,36 @@ class ArenaOrchestrator:
                         match_id = f"{domain}#{tid}#{a}__{b}#r{round_idx}"
                         if self._match_already_recorded(state, match_id):
                             continue
-                        v: Verdict = compare(
-                            task=tprompt,
-                            output_a=outputs[a],
-                            output_b=outputs[b],
-                            skill_a=a,
-                            skill_b=b,
-                            client=client,
-                        )
+                        # 单场判官解析/调用失败不应拖垮整轮:降级为 tie 并继续,
+                        # match 仍记入 recorded_ids(否则下次 resume 会无限重试同一坏匹配)。
+                        try:
+                            v: Verdict = compare(
+                                task=tprompt,
+                                output_a=outputs[a],
+                                output_b=outputs[b],
+                                skill_a=a,
+                                skill_b=b,
+                                client=client,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "compare 失败,降级为 tie 继续: match_id=%s err=%r",
+                                match_id, exc,
+                            )
+                            v = Verdict(
+                                winner="tie",
+                                scores={
+                                    "A": DimensionScores(
+                                        correctness=5.0, completeness=5.0,
+                                        clarity=5.0, creativity=5.0,
+                                    ),
+                                    "B": DimensionScores(
+                                        correctness=5.0, completeness=5.0,
+                                        clarity=5.0, creativity=5.0,
+                                    ),
+                                },
+                                reasoning="judge failed; default tie",
+                            )
                         score = v.to_score()
                         elo_dom = domain_elo[domain]
                         r_a, r_b = elo_dom.get(a, 1500.0), elo_dom.get(b, 1500.0)
