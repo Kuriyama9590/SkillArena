@@ -667,10 +667,15 @@ class ArenaOrchestrator:
             logger.info("阶段 A 已 done,跳过(从缓存恢复 matches)")
             return self._reconstruct_matches_from_cache()
 
+        # Resume: 必须保留上一轮已记录的 match_id 去重集合与计数,否则
+        # 整个阶段 A 会被重跑(judge 重复调用 → Elo 重复计算)。原实现直接
+        # 重新赋值 state["phases"]["A"] 会丢掉 recorded_ids,是 resume 路径的 bug。
+        prev_A = state["phases"].get("A", {})
         state["phases"]["A"] = {
             "status": "running",
             "started_at": _now_iso(),
-            "matches": 0,
+            "matches": prev_A.get("matches", 0),
+            "recorded_ids": prev_A.get("recorded_ids", []),
         }
         self._save_state(state)
 
