@@ -45,7 +45,6 @@ function formatEvent(evt: SSEEvent): string {
       break;
     case 'phase_a_skill_exec':
       fields.push(`EXEC ${evt.skill} on ${evt.task_id}`);
-      fields.push(evt.cache_hit ? '[cache]' : '[api]');
       break;
     case 'phase_a_domain_start':
       fields.push(`DOMAIN ${evt.domain} started`);
@@ -114,6 +113,7 @@ function formatEvent(evt: SSEEvent): string {
       return '';
     case 'skill_output_done':
       fields.push(`OUTPUT DONE ${evt.skill} on ${evt.task_id} (${evt.tokens ?? '?'} tok)`);
+      fields.push(evt.cache_hit ? '[cache]' : '[api]');
       break;
     default:
       fields.push(JSON.stringify(evt));

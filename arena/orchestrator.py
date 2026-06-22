@@ -782,7 +782,6 @@ class ArenaOrchestrator:
                         "domain": domain,
                         "task_id": tid,
                         "skill": name,
-                        "cache_hit": False,
                     })
 
                     # 流式执行:优先使用 execute_stream 实现实时输出推送
@@ -819,6 +818,9 @@ class ArenaOrchestrator:
                             "skill": name,
                             "output": run_content,
                             "tokens": result.total_tokens,
+                            "cache_hit": result.cache_hit_tokens > 0,
+                            "cache_hit_tokens": result.cache_hit_tokens,
+                            "cache_miss_tokens": result.cache_miss_tokens,
                         })
                         run = RunOutput(
                             skill_name=skill_name_for_run,

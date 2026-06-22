@@ -28,6 +28,9 @@ class CompletionResult:
         completion_tokens: 输出 token 数(若模型未返回则为 0)。
         total_tokens: 总 token 数。
         model: 实际使用的模型名。
+        cache_hit_tokens: 命中上下文缓存的输入 token 数(DeepSeek 自动缓存,
+            命中部分按 0.1x 计价;0 表示未命中或 usage 未返回)。
+        cache_miss_tokens: 未命中缓存的输入 token 数(按全价计价)。
     """
 
     content: str
@@ -35,6 +38,8 @@ class CompletionResult:
     completion_tokens: int
     total_tokens: int
     model: str
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
 
 
 class DeepSeekClient:
@@ -231,6 +236,8 @@ class DeepSeekClient:
                 full_content = ""
                 prompt_tokens = 0
                 completion_tokens = 0
+                cache_hit_tokens = 0
+                cache_miss_tokens = 0
 
                 for chunk in response:
                     if not chunk.choices:
@@ -239,6 +246,12 @@ class DeepSeekClient:
                         if usage:
                             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
                             completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+                            cache_hit_tokens = int(
+                                getattr(usage, "prompt_cache_hit_tokens", 0) or 0
+                            )
+                            cache_miss_tokens = int(
+                                getattr(usage, "prompt_cache_miss_tokens", 0) or 0
+                            )
                         continue
                     delta = chunk.choices[0].delta
                     token_text = getattr(delta, "content", None) or ""
@@ -256,6 +269,8 @@ class DeepSeekClient:
                     completion_tokens=completion_tokens,
                     total_tokens=total,
                     model=model,
+                    cache_hit_tokens=cache_hit_tokens,
+                    cache_miss_tokens=cache_miss_tokens,
                 )
 
             except APITimeoutError as exc:
@@ -309,6 +324,12 @@ class DeepSeekClient:
             if usage
             else prompt_tokens + completion_tokens
         )
+        cache_hit_tokens = (
+            int(getattr(usage, "prompt_cache_hit_tokens", 0) or 0) if usage else 0
+        )
+        cache_miss_tokens = (
+            int(getattr(usage, "prompt_cache_miss_tokens", 0) or 0) if usage else 0
+        )
 
         return CompletionResult(
             content=content,
@@ -316,6 +337,8 @@ class DeepSeekClient:
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             model=model,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_miss_tokens=cache_miss_tokens,
         )
 
 
