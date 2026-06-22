@@ -320,6 +320,10 @@ def isolated_paths(
     monkeypatch.setattr("arena.orchestrator.RUNS_CACHE_DIR", fake_runs)
     monkeypatch.setattr("arena.orchestrator.FUSED_DIR", fake_fused)
     monkeypatch.setattr("arena.orchestrator.IMPROVED_DIR", fake_improved)
+    # MATCHES_LOG 在模块导入时已绑定到原 REPORTS_DIR,仅重定向 REPORTS_DIR
+    # 不会回溯更新这个常量 — 必须单独 patch,否则测试 fixture 落进生产 jsonl
+    fake_matches_log = tmp_path / "matches.jsonl"
+    monkeypatch.setattr("arena.orchestrator.MATCHES_LOG", fake_matches_log)
     # runner.list_available_skills 也读 SKILLS_DIR
     monkeypatch.setattr("arena.config.SKILLS_DIR", tmp_path)
     return {
