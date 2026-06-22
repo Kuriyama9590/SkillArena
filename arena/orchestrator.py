@@ -177,8 +177,8 @@ class ArenaOrchestrator:
             skill_paths: 参与的 skill 文件路径列表(可含 baseline "baseline" 表示裸 prompt)。
             task_source: "fixed" 用 tasks/fixed/ 下的固定任务;"auto" 调 v4-pro 动态生成;
                 "hybrid" 加载 fixed + auto 并去重。
-            auto_categories: 当 task_source=auto/hybrid 时,生成任务的类目列表;
-                None 时使用默认 ["writing", "coding", "analysis"]。
+            auto_categories: 当 task_source=auto/hybrid 时,生成任务的赛道列表;
+                None 时使用默认(全部 6 条赛道,见 skill_metadata.TASK_DOMAINS)。
             auto_per_category: 每个类目生成多少个 auto 任务。
             rounds_per_pair: 每个 (task, skill_a, skill_b) 三元组跑多少轮 Elo(>=1)。
             fused_output_name: 阶段 B 融合产物的文件名(默认 `<a>__<b>_fused.md`)。
@@ -566,7 +566,7 @@ class ArenaOrchestrator:
                     all_tasks.append(t)
 
         if task_source in ("auto", "hybrid"):
-            cats = auto_categories if auto_categories else ["writing", "coding", "analysis"]
+            cats = auto_categories if auto_categories else list(TASK_DOMAINS)
             auto_tasks = self._generate_auto_tasks(
                 categories=cats, per_category=auto_per_category
             )

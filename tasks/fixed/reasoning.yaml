@@ -1,29 +1,36 @@
-- id: analysis-001
-  category: analysis
+- id: reasoning-001
+  category: reasoning
   prompt: "分析一家中型电商公司的 GMV 同比下降 15%,列出至少 4 个可能原因,并说明如何验证每个假设"
   reference: null
   difficulty: medium
 
-- id: analysis-002
-  category: analysis
+- id: reasoning-002
+  category: reasoning
   prompt: "对比 MySQL 和 PostgreSQL 的关键差异,适用场景,以及如何选择(用表格输出)"
   reference: null
   difficulty: medium
 
-- id: analysis-003
-  category: analysis
+- id: reasoning-003
+  category: reasoning
   prompt: "为什么很多公司从微服务架构回迁到单体?分析至少 3 个核心原因"
   reference: null
   difficulty: hard
 
-- id: analysis-004
-  category: analysis
+- id: reasoning-004
+  category: reasoning
   prompt: "某 SaaS 产品的月留存(Month-1 Retention)连续 3 个月从 45% 降到 30%,请给出排查思路"
   reference: null
   difficulty: hard
 
-- id: analysis-005
-  category: analysis
+- id: reasoning-005
+  category: reasoning
   prompt: "解释什么是'技术债',并举例说明'显性技术债'和'隐性技术债'的区别"
   reference: null
   difficulty: easy
+
+- id: reasoning-006
+  category: reasoning
+  prompt: "解释 Python GIL 是什么,为什么存在,以及它如何影响多线程程序;300 字以内"
+  reference: null
+  difficulty: hard
+

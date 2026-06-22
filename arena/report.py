@@ -27,7 +27,7 @@ class MatchResult:
         skill_a / skill_b: 双方 skill 名称。
         output_a / output_b: 双方产物文本(便于溯源,可省略)。
         verdict: 评判结果。
-        domain: 所属领域(如 "writing" / "coding" / "analysis")。
+        domain: 所属赛道(如 "writing" / "coding" / "reasoning")。
     """
 
     match_id: str
@@ -120,7 +120,7 @@ def generate_report(
         elo_state: 旧版扁平 Elo 分数(向后兼容)。
         output_path: 输出路径,默认 reports/report_YYYYMMDD_HHMMSS.md。
         title: 报告标题。
-        domain_elo: 分领域 Elo 状态 {"writing": {"skill-a": 1560}, ...}。
+        domain_elo: 分赛道 Elo 状态 {"writing": {"skill-a": 1560}, ...}。
 
     Returns:
         实际写入的 Path。

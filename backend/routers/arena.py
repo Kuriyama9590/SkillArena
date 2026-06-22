@@ -66,9 +66,9 @@ def _all_skill_paths() -> list[str]:
 
 
 def _validate_skill_domains(skill_paths: list[str]) -> None:
-    """跨域防护:专用领域(writing/coding/analysis)之间互斥,通用(general)除外。
+    """跨赛道防护:专用赛道(coding/writing/reasoning/roleplay/instruction/longtext)之间互斥,通用(general)除外。
 
-    若选中技能横跨多个专用领域,抛 400 拒绝;无领域标签的技能也拒绝。
+    若选中技能横跨多个专用赛道,抛 400 拒绝;无赛道标签的技能也拒绝。
     """
     specific_domains: set[str] = set()
     for p in skill_paths:

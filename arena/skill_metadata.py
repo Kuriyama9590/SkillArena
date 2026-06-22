@@ -1,14 +1,19 @@
-"""Skill 领域标签解析与推断。
+"""Skill 赛道标签解析与推断。
 
 从 .md 文件读取 YAML front matter 中的 `domains` 字段,
 若无 front matter 则从文件名和内容自动推断。
 无法确定领域时抛出 ValueError——不允许静默回退到 general。
 
-领域标签与 Task.category 对齐:
-- writing  → 参与 writing 类 task
-- coding   → 参与 coding 类 task
-- analysis → 参与 analysis 类 task
-- general  → 参与所有 task（必须显式声明）
+赛道标签与 Task.category 对齐（6 条专用赛道 + 1 跨域属性）:
+- coding       → 产出可执行代码或技术方案
+- writing      → 有立场/有原创表达的成文
+- reasoning    → 分析、综合、判断、多步推导（无标准答案）
+- roleplay     → 扮演特定身份/人格完成任务
+- instruction  → 复杂多约束指令全满足（含结构化输出/schema 约束）
+- longtext     → 超长输入下检索/定位/综合
+- general      → 跨域属性，参与所有赛道（必须显式声明）
+
+详见 docs/REQUIREMENTS.md §2.1。
 """
 from __future__ import annotations
 
@@ -19,20 +24,35 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-VALID_DOMAINS: tuple[str, ...] = ("writing", "coding", "analysis", "general")
-TASK_DOMAINS: tuple[str, ...] = ("writing", "coding", "analysis")
+VALID_DOMAINS: tuple[str, ...] = (
+    "coding",
+    "writing",
+    "reasoning",
+    "roleplay",
+    "instruction",
+    "longtext",
+    "general",
+)
+TASK_DOMAINS: tuple[str, ...] = (
+    "coding",
+    "writing",
+    "reasoning",
+    "roleplay",
+    "instruction",
+    "longtext",
+)
 
 
 @dataclass(frozen=True)
 class SkillEntry:
-    """带领域标签的 skill 条目。"""
+    """带赛道标签的 skill 条目。"""
 
     name: str
     content: str
     domains: tuple[str, ...]
 
     def participates_in(self, domain: str) -> bool:
-        """判断该 skill 是否参与指定领域的竞技。"""
+        """判断该 skill 是否参与指定赛道的竞技。"""
         if "general" in self.domains:
             return True
         return domain in self.domains
@@ -43,32 +63,57 @@ _YAML_FM_RE = re.compile(
 )
 
 _FILENAME_KEYWORDS: dict[str, list[str]] = {
+    "coding": [
+        "sql", "code", "coder", "coding", "engineer", "engineering",
+        "shadcn", "android", "security", "component", "refactor",
+        "debug",
+    ],
     "writing": [
         "writer", "writing", "narrative", "persuasive",
-        "email", "wording", "doc", "invitation", "cofounder",
+        "email", "wording", "doc", "invitation", "cofounder", "copy",
     ],
-    "coding": [
-        "sql", "code", "reviewer", "shadcn", "android",
-        "security", "component",
-    ],
-    "analysis": [
+    "reasoning": [
         "analysis", "market", "scoring", "advocate",
         "critic", "thought", "step-back", "analyzer",
+        "chain", "devils", "reasoning", "deduce",
+    ],
+    "roleplay": [
+        "roleplay", "role-play", "persona", "character",
+        "actor",
+    ],
+    "instruction": [
+        "instruction", "schema", "constraint", "formatter",
+        "compliance", "following",
+    ],
+    "longtext": [
+        "longtext", "long-text", "retrieval", "reader",
+        "summarizer", "digest",
     ],
 }
 
 _CONTENT_KEYWORDS: dict[str, list[str]] = {
-    "writing": [
-        "写作", "文案", "邮件", "叙事", "写作风格",
-        "段落", "文章", "文章结构",
-    ],
     "coding": [
         "代码", "SQL", "查询", "组件", "React",
-        "Android", "安全", "接口",
+        "Android", "安全", "接口", "可执行", "函数实现",
     ],
-    "analysis": [
+    "writing": [
+        "写作", "文案", "邮件", "叙事", "写作风格",
+        "段落", "文章", "文章结构", "议论文",
+    ],
+    "reasoning": [
         "分析", "评估", "推理", "分步", "核查",
-        "反方", "自检",
+        "反方", "自检", "推导", "因果",
+    ],
+    "roleplay": [
+        "扮演", "角色", "人格", "身份", "入戏",
+    ],
+    "instruction": [
+        "指令", "约束", "格式", "结构化输出", "schema",
+        "必须包含", "严格遵守",
+    ],
+    "longtext": [
+        "长文", "长文本", "检索", "定位", "遗漏",
+        "全文", "上下文",
     ],
 }
 

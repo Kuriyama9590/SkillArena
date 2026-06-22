@@ -161,7 +161,7 @@ def load_state(path: Path | None = None) -> dict[str, float]:
 
     兼容两种格式:
     - 扁平: {"skill-a": 1560.0, ...}
-    - 分领域: {"writing": {"skill-a": 1560.0}, ...}
+    - 分赛道: {"writing": {"skill-a": 1560.0}, ...}
 
     扁平格式直接返回;分领域格式需用 load_domain_state()。
     """

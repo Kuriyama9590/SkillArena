@@ -190,7 +190,7 @@ class ArenaRunner:
 
                 elif phase == "B":
                     from arena.elo import load_domain_state
-                    from arena.skill_metadata import load_skill_entry
+                    from arena.skill_metadata import load_skill_entry, TASK_DOMAINS
                     skills = {}
                     for p in skill_paths:
                         entry = load_skill_entry(Path(p))
@@ -198,7 +198,7 @@ class ArenaRunner:
                     domain_elo = load_domain_state()
                     state = orch._new_state(skill_paths=skill_paths, task_source=task_source)
                     fused_list = []
-                    for domain in ("writing", "coding", "analysis"):
+                    for domain in TASK_DOMAINS:
                         elo_dom = domain_elo.get(domain, {})
                         non_base = {n: r for n, r in elo_dom.items() if not n.startswith("baseline")}
                         if len(non_base) >= 2:
@@ -216,7 +216,7 @@ class ArenaRunner:
 
                 elif phase == "C":
                     from arena.elo import load_domain_state
-                    from arena.skill_metadata import load_skill_entry
+                    from arena.skill_metadata import load_skill_entry, TASK_DOMAINS
                     skills = {}
                     for p in skill_paths:
                         entry = load_skill_entry(Path(p))
@@ -224,7 +224,7 @@ class ArenaRunner:
                     domain_elo = load_domain_state()
                     state = orch._new_state(skill_paths=skill_paths, task_source=task_source)
                     imp_list = []
-                    for domain in ("writing", "coding", "analysis"):
+                    for domain in TASK_DOMAINS:
                         elo_dom = domain_elo.get(domain, {})
                         non_base = {n: r for n, r in elo_dom.items() if not n.startswith("baseline")}
                         if non_base:

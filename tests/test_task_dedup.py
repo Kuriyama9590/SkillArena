@@ -95,7 +95,7 @@ class TestIsDuplicate:
         dedup = TaskDeduplicator()
         existing = [_t("writing-001", "写一段关于远程办公的短文,200 字以内")]
         new = _t(
-            "analysis-001",
+            "reasoning-001",
             "某 SaaS 产品月留存从 45% 跌到 30%,请分析可能原因",
         )
         assert dedup.is_duplicate(new, existing) is False

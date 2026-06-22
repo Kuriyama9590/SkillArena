@@ -29,18 +29,50 @@
 - general 定级赛：6 条赛道各打（准确性优先）
 
 ### 下次 grill 续接点（按优先级）
-- [ ] **【最高】general 在某赛道未开榜时怎么定级**：a=vs baseline 定级接受虚高分 / b=待开榜后定级（推 b，与动态开榜精神一致）。本轮未拍，**这是下次第一个要答的**
-- [ ] general 定级赛成本确认：≈27 次 API 调用/general 入榜，reasoner 翻倍——接受？（倾向接受，准确性优先）
-- [ ] general Elo 高频变动是否前端标注（倾向不标注，是 general 本质）
-- [ ] 产物"3 类冠军"的"最好"判定口径（定级 Elo？后续胜率？超越幅度？）
-- [ ] 劣化记忆库结构与检索（按赛道？血缘？注入格式）——新组件，全待设计
-- [ ] 评判维度是否按赛道调整（角色扮演加"人格一致性"？指令遵循部分机检取代盲评？）
-- [ ] 定级赛场次稳定性（1 场偶然 vs 2-3 场）与对手选择
-- [ ] 首页 6 冠军展示墙信息架构（展示哪些字段？点击进分赛道榜？）
+
+> 2026-06-18 本轮 grill 收口：上轮留下的 7 项待办全部拍板落盘（定级赛 general 规则/成本/时机、定级场次分档、产物冠军判定、劣化记忆库、评判维度全定制+机检、首页展示墙）。仅衍生 1 项新待设计（机检沙箱隔离方案）。
+
+- [x] **【最高】general 在某赛道未开榜时怎么定级** → **拍 b**：未开榜不打定级赛、标"待开榜定级"占位，开榜后补打。已落盘 REQUIREMENTS.md §5.5（2026-06-18）。general 同此规则。
+- [x] general 定级赛成本 + 入榜时机 → **拍 i**：加入即扫 6 赛道，已开榜当场定级入榜，未开榜占位待补。成本 18-36 次 API 调用一次性，接受。已落盘 §5.5。
+- [x] general Elo 高频变动前端标注 → **拍不标注**：波动是 general 本质属性非异常，天梯如实反映即可。已落盘 §3.3。
+- [x] 产物"3 类冠军"判定口径 → **拍定级 Elo 最高**：run 内同类定级 Elo 最高，同分用超越父代幅度 tiebreak。不跨 run、不用后续胜率。已落盘 §6.3。
+- [x] 劣化记忆库设计 → **拍全套推荐**：血缘优先+赛道兜底检索、血缘断淘汰+去重合并保留、结构化三段摘要注入（≤5 条 top）、融合同库不同检索口径。已落盘 §6.8。
+- [x] 评判维度按赛道调整 → **拍分赛道全定制 + 机检**：6 套维度集（替换统一 4 维）；代码/指令遵循加机检（test_pass_rate / constraint_satisfaction），机检定 winner 平手退化盲评；沙箱隔离硬要求（方案待设计）；纯盲评赛道 winner 仍由 judge 定。已落盘 §5.3。
+- [x] 定级赛场次稳定性与对手选择 → **拍分档**：对手=已开榜 vs 中位/未开榜不打待补；场次=专用/产物 2 场、general 1 场/赛道。已落盘 §5.5。
+- [x] 首页 6 冠军展示墙信息架构 → **拍全套推荐**：6 格固定布局，冠军卡含类型徽章/血缘/战绩/baseline警示；未开榜灰显占位保 6 格；点击进该赛道分赛道榜。已落盘 §9.2。
+- [x] 代码机检沙箱隔离设计 → **拍全套**：机检拆两块（指令遵循=纯解析不需沙箱，仅代码赛道需执行沙箱）；代码沙箱=硬化版受限子进程（威胁模型非对抗，6 层硬化栈：Job Object/受限令牌/ACL临时目录/AST拒绝列表/资源上限/unittest），AST-only 断网免提权；失败语义=一边跑通一边挂→跑通胜、两边都挂→盲评、都跑通→比test_pass_rate平手盲评；Task 加 `machine_check` 字段；语言 Python-only v1。已落盘 §5.3。
+  - 实现待办（设计已定，编码未做）：
+    - [ ] `Task` 加可选 `machine_check` 字段（code: test_cases+runner / constraints: json_schema|regex|max_length）
+    - [ ] 代码沙箱组件：Job Object 资源限制 + 受限令牌降权 + ACL 临时目录 + AST 拒绝列表（含 socket/requests/urllib 断网）+ 超时强杀
+    - [ ] unittest runner：import 产物 + 跑测试 + 捕获 pass/fail/异常/超时
+    - [ ] 机检 winner 分支接入 judge 流程（代码赛道失败语义）
+    - [ ] 指令遵循 in-process 校验器（jsonschema + 正则 + len）
+    - [ ] 代码赛道首批任务配人工测试用例（混合来源，人工为主）
 
 ---
 
 ## 本轮已完成
+
+### 实现层：6 赛道迁移（2026-06-18 进行中）
+
+> 设计已全定（见 docs/REQUIREMENTS.md），开始编码。本轮做**代码层 6 赛道词汇迁移 + 现有数据归类 + 同步测试**，跑通 154 测试。内容缺口（roleplay/instruction/longtext 的 skill+任务、coding 补 skill）下一轮。
+
+阶段 1：arena/ 核心 + 数据 + 测试（本轮）
+- [x] `arena/skill_metadata.py`：VALID_DOMAINS/TASK_DOMAINS → 6 赛道+general；_FILENAME_KEYWORDS/_CONTENT_KEYWORDS 重写
+- [x] `arena/task_generator.py`：ALLOWED_CATEGORIES → 6 赛道（去 analysis/explanation，加 roleplay/instruction/longtext）；Task 加可选 `machine_check` 字段；GENERATOR_SYSTEM_PROMPT 去旧 4 维文案
+- [x] `arena/orchestrator.py:569` 默认 auto_categories 用 TASK_DOMAINS；:181 注释
+- [x] `arena/report.py`/`elo.py` 注释示例更新
+- [x] `backend/sse.py:201,227` 硬编码域元组 → 导入 TASK_DOMAINS
+- [x] `backend/routers/arena.py` _validate_skill_domains 注释
+- [x] skills/*.md front matter：gen-chain-of-thought/gen-devils-advocate analysis→reasoning（gen-code-reviewer 保留 coding，归并问题留内容轮）
+- [x] tasks/fixed/：analysis.yaml→reasoning.yaml(5条改category+id)；coding-004 迁 reasoning(为 reasoning-006)
+- [x] 测试同步：analysis→reasoning 引用处；test_all_categories_supported 自动覆盖 6 赛道
+- [x] 跑 `pytest` 全绿（154 passed, 1 skipped）；后端导入 OK；前端 tsc 通过
+
+**阶段 1 现状（2026-06-18）**：代码层已支持 6 赛道。可开榜赛道仅 writing(3 skill)/reasoning(2 skill)；coding 仅 1 skill 不够开榜；roleplay/instruction/longtext skill+任务双空。4 赛道待内容建设才能开榜。
+
+阶段 2（下一轮）：backend 层细化 + 前端迁移 + 删 Leaderboard 页
+阶段 3（下一轮）：内容建设（roleplay/instruction/longtext skill+任务、coding 补 skill）
 
 
 ### Skill 领域隔离(核心)

@@ -16,12 +16,6 @@
   reference: null
   difficulty: medium
 
-- id: coding-004
-  category: coding
-  prompt: "解释 Python GIL 是什么,为什么存在,以及它如何影响多线程程序;300 字以内"
-  reference: null
-  difficulty: hard
-
 - id: coding-005
   category: coding
   prompt: "设计一个 LRU Cache,要求 get 和 put 都是 O(1),用 Python 实现并附简要思路说明"

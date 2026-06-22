@@ -6,7 +6,7 @@
 - 输出严格 JSON 数组,每项包含: id / category / prompt / difficulty / (可选) reference。
 - 用 pydantic 严格校验,失败的项 retry 一次(最多 2 次);仍失败则跳过并记 warning。
 - 提供 `save_to_fixed` 方法把生成任务合并到固定任务集 YAML。
-- 类别白名单: writing / coding / analysis / reasoning / explanation。
+- 类别白名单(6 条赛道): coding / writing / reasoning / roleplay / instruction / longtext。
 - 所有生成任务必须带唯一 id,格式 `{category}-{auto}-{6位hash}`。
 
 去重由 `arena.task_dedup.TaskDeduplicator` 提供,本模块不重复实现。
@@ -30,13 +30,14 @@ from .deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 
-# -------- 类目白名单 --------
+# -------- 类目白名单(6 条赛道,与 skill_metadata.TASK_DOMAINS 对齐) --------
 ALLOWED_CATEGORIES: tuple[str, ...] = (
-    "writing",
     "coding",
-    "analysis",
+    "writing",
     "reasoning",
-    "explanation",
+    "roleplay",
+    "instruction",
+    "longtext",
 )
 ALLOWED_DIFFICULTIES: tuple[str, ...] = ("easy", "medium", "hard")
 
@@ -49,10 +50,13 @@ class Task(BaseModel):
 
     Attributes:
         id: 唯一标识,生成任务格式 `{category}-auto-{6位hash}`。
-        category: 任务类别,必须在 ALLOWED_CATEGORIES 内。
+        category: 任务所属赛道,必须在 ALLOWED_CATEGORIES 内。
         prompt: 任务原文,直接喂给执行模型。
         reference: 可选参考答案。
         difficulty: 难度标签,必须在 ALLOWED_DIFFICULTIES 内。
+        machine_check: 可选机检元数据。代码赛道为 `{type: "code", test_cases: [...], runner: "unittest"}`;
+            指令遵循赛道为 `{type: "constraints", constraints: [{kind: "json_schema"|"regex"|"max_length", ...}]}`。
+            非机检赛道(writing/reasoning/roleplay/longtext)不带此字段。详见 docs/REQUIREMENTS.md §5.3。
     """
 
     id: str
@@ -60,6 +64,7 @@ class Task(BaseModel):
     prompt: str
     reference: str | None = None
     difficulty: str
+    machine_check: dict[str, Any] | None = None
 
     @field_validator("category")
     @classmethod
@@ -102,7 +107,7 @@ class Task(BaseModel):
 
 GENERATOR_SYSTEM_PROMPT = """你是 Skill 竞技场的"任务设计专家"。
 
-你的职责是**生成多样化、不重复的测试任务**,用于在 skill 写作风格之间做盲评对比。
+你的职责是**生成多样化、不重复的测试任务**,用于在该赛道的 skill 之间做对比竞技。
 
 ## 任务格式(严格 JSON 数组,无任何额外文字)
 ```json
@@ -120,7 +125,7 @@ GENERATOR_SYSTEM_PROMPT = """你是 Skill 竞技场的"任务设计专家"。
 
 ## 关键要求
 1. **多样性**:任务之间主题、切入点、风格显著不同,不要同义改写。
-2. **可评判**:任务必须能在 correctness / completeness / clarity / creativity 维度上被独立评分。
+2. **可评判**:任务必须能体现该赛道的能力分化(不同 skill 产出应有可辨识的高下之分),而非所有 skill 都能做好的无信号任务。
 3. **id 唯一**:6 位 hash 建议基于 prompt 的短摘要生成(小写字母+数字),避免碰撞。
 4. **prompt 长度**:中等复杂度(15-150 字),既要清晰也要有发挥空间。
 5. **difficulty 与任务复杂度匹配**:
@@ -133,7 +138,7 @@ GENERATOR_SYSTEM_PROMPT = """你是 Skill 竞技场的"任务设计专家"。
 ## 禁止行为
 - 不要生成同一主题的近义改写。
 - 不要在 prompt 中泄露评判维度(避免引导)。
-- 不要在 prompt 中出现"请扮演..."等元描述。
+- 不要在 prompt 中出现"请扮演..."等元描述(roleplay 赛道的身份设定写在 prompt 本身的任务语境里,而非元指令)。
 """
 
 GENERATOR_USER_PROMPT_TEMPLATE = """请生成 {count} 个 category={category},difficulty={difficulty} 的测试任务。
