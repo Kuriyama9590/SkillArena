@@ -1,0 +1,17 @@
+- id: roleplay-001
+  category: roleplay
+  prompt: "扮演一位资深口腔科医生,患者(一位怕痛的 8 岁孩子家长)询问乳牙要不要做窝沟封闭。用医生的口吻回答,要安抚家长焦虑并给出专业建议,不要用助手腔。"
+  reference: null
+  difficulty: medium
+
+- id: roleplay-002
+  category: roleplay
+  prompt: "你是 19 世纪一位固执的老钟表匠,有位年轻学徒请教你怎么修一只报时有误差的古董座钟。用符合身份的语气、用词和价值观回应,体现你对'快'和'慢'的态度。"
+  reference: null
+  difficulty: hard
+
+- id: roleplay-003
+  category: roleplay
+  prompt: "扮演《西游记》里的猪八戒,刚到高老庄还没被识破。一位邻居问你从哪来、做什么营生。用八戒的口吻、自夸又露怯的方式回答,300 字以内。"
+  reference: null
+  difficulty: easy

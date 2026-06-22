@@ -1,0 +1,17 @@
+- id: instruction-001
+  category: instruction
+  prompt: "用恰好 3 句话介绍量子纠缠,每句不超过 25 个汉字,不能出现'神秘'二字,第一句必须是疑问句。"
+  reference: null
+  difficulty: medium
+
+- id: instruction-002
+  category: instruction
+  prompt: "输出一个 JSON 对象,包含且仅包含三个字段:name(字符串)、age(正整数)、tags(字符串数组,恰好 2 个元素)。不要 markdown 围栏,不要任何解释文字,不要尾逗号。"
+  reference: null
+  difficulty: easy
+
+- id: instruction-003
+  category: instruction
+  prompt: "写一段产品说明,必须同时满足:① 以'注意:'开头;② 恰好两个段落;③ 第二段必须包含数字'72';④ 全文不得使用'非常'和'极其';⑤ 以句号结尾,不得以问号或感叹号结尾。"
+  reference: null
+  difficulty: hard
